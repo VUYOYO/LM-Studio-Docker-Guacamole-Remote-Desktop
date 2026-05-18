@@ -1,0 +1,21 @@
+# Runtime-generated directories
+data/
+cache/
+models/
+
+# Guacamole runtime-generated mapping
+guacamole/user-mapping.xml
+
+# Local environment overrides
+.env.local
+.env.*.local
+!.env
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
