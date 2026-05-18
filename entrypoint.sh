@@ -10,6 +10,8 @@ RUNTIME_ENGINE_FAMILY="${RUNTIME_ENGINE_FAMILY:-llama.cpp}"
 PREFERRED_GPU_BACKEND="${PREFERRED_GPU_BACKEND:-cuda}"
 FALLBACK_GPU_BACKEND="${FALLBACK_GPU_BACKEND:-vulkan}"
 LMS_BACKEND_SETUP_TIMEOUT="${LMS_BACKEND_SETUP_TIMEOUT:-240}"
+LMS_BACKEND_SELECT_RETRIES="${LMS_BACKEND_SELECT_RETRIES:-1}"
+LMS_BACKEND_AUTOCONFIG_STAMP="${LMS_BACKEND_AUTOCONFIG_STAMP:-/root/.cache/lm-studio/.internal/.backend-autoconfig-done}"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 SCREEN_RESOLUTION="${SCREEN_RESOLUTION:-1600x900}"
 SCREEN_DEPTH="${SCREEN_DEPTH:-24}"
@@ -79,6 +81,10 @@ fi
 if ! echo "$LM_STUDIO_DOWNLOAD_TIMEOUT" | grep -Eq '^[0-9]+$'; then
     echo ">>> Invalid LM_STUDIO_DOWNLOAD_TIMEOUT=$LM_STUDIO_DOWNLOAD_TIMEOUT, fallback to 30"
     LM_STUDIO_DOWNLOAD_TIMEOUT="30"
+fi
+if ! echo "$LMS_BACKEND_SELECT_RETRIES" | grep -Eq '^[0-9]+$' || [ "$LMS_BACKEND_SELECT_RETRIES" -le 0 ]; then
+    echo ">>> Invalid LMS_BACKEND_SELECT_RETRIES=$LMS_BACKEND_SELECT_RETRIES, fallback to 1"
+    LMS_BACKEND_SELECT_RETRIES="1"
 fi
 
 case "$(echo "$DESKTOP_LANGUAGE" | tr '[:lower:]' '[:upper:]')" in
@@ -602,6 +608,7 @@ if [ "$CLEAN_LM_VENDOR_CACHE" = "true" ]; then
     echo ">>> Cleaning stale LM Studio vendor backend cache..."
     rm -rf /root/.cache/lm-studio/extensions/backends/vendor/_amphibian 2>/dev/null || true
     rm -rf /root/.cache/lm-studio/extensions/backends/runtime-index* 2>/dev/null || true
+    rm -f "$LMS_BACKEND_AUTOCONFIG_STAMP" 2>/dev/null || true
 fi
 
 echo ">>> Launching LM Studio (API on port 1234)..."
@@ -656,7 +663,16 @@ setup_lms_runtime_backends() {
     local selected=""
     local ready=false
     local primary_queries=("${RUNTIME_ENGINE_FAMILY}:${PREFERRED_GPU_BACKEND}")
-    local fallback_queries=("${RUNTIME_ENGINE_FAMILY}:${FALLBACK_GPU_BACKEND}")
+    local fallback_queries=()
+
+    if [ -n "$FALLBACK_GPU_BACKEND" ] && [ "$FALLBACK_GPU_BACKEND" != "$PREFERRED_GPU_BACKEND" ]; then
+        fallback_queries=("${RUNTIME_ENGINE_FAMILY}:${FALLBACK_GPU_BACKEND}")
+    fi
+
+    if [ -f "$LMS_BACKEND_AUTOCONFIG_STAMP" ] && [ "$FORCE_UPDATE" != "true" ] && [ "$CLEAN_LM_VENDOR_CACHE" != "true" ]; then
+        echo ">>> Runtime backend auto-setup already done, skip."
+        return 0
+    fi
 
     while [ "$SECONDS" -lt "$deadline" ]; do
         if [ -x /root/.cache/lm-studio/bin/lms ]; then
@@ -688,20 +704,14 @@ setup_lms_runtime_backends() {
         return 0
     fi
 
-    echo ">>> Runtime backend auto-setup with $lms_bin (family: $RUNTIME_ENGINE_FAMILY, preferred: $PREFERRED_GPU_BACKEND, fallback: $FALLBACK_GPU_BACKEND)"
-    "$lms_bin" runtime survey >/tmp/lms-runtime-survey.log 2>&1 || true
+    echo ">>> Runtime backend auto-setup with $lms_bin (family: $RUNTIME_ENGINE_FAMILY, preferred: $PREFERRED_GPU_BACKEND, fallback: ${FALLBACK_GPU_BACKEND:-none})"
 
     for q in "${primary_queries[@]}"; do
         "$lms_bin" runtime get "$q" -y >>/tmp/lms-runtime-get-primary.log 2>&1 || true
     done
-    if [ -n "$FALLBACK_GPU_BACKEND" ] && [ "$FALLBACK_GPU_BACKEND" != "$PREFERRED_GPU_BACKEND" ]; then
-        for q in "${fallback_queries[@]}"; do
-            "$lms_bin" runtime get "$q" -y >>/tmp/lms-runtime-get-fallback.log 2>&1 || true
-        done
-    fi
 
     for q in "${primary_queries[@]}"; do
-        for _ in 1 2 3 4 5; do
+        for _ in $(seq 1 "$LMS_BACKEND_SELECT_RETRIES"); do
             if "$lms_bin" runtime select "$q" --latest >>/tmp/lms-runtime-select.log 2>&1; then
                 selected="$q"
                 break
@@ -711,9 +721,14 @@ setup_lms_runtime_backends() {
         [ -n "$selected" ] && break
     done
 
-    if [ -z "$selected" ] && [ -n "$FALLBACK_GPU_BACKEND" ] && [ "$FALLBACK_GPU_BACKEND" != "$PREFERRED_GPU_BACKEND" ]; then
+    if [ -z "$selected" ] && [ "${#fallback_queries[@]}" -gt 0 ]; then
+        echo ">>> Primary runtime backend unavailable, trying fallback: $FALLBACK_GPU_BACKEND"
         for q in "${fallback_queries[@]}"; do
-            for _ in 1 2 3 4 5; do
+            "$lms_bin" runtime get "$q" -y >>/tmp/lms-runtime-get-fallback.log 2>&1 || true
+        done
+
+        for q in "${fallback_queries[@]}"; do
+            for _ in $(seq 1 "$LMS_BACKEND_SELECT_RETRIES"); do
                 if "$lms_bin" runtime select "$q" --latest >>/tmp/lms-runtime-select.log 2>&1; then
                     selected="$q"
                     break
@@ -725,6 +740,8 @@ setup_lms_runtime_backends() {
     fi
 
     if [ -n "$selected" ]; then
+        mkdir -p "$(dirname "$LMS_BACKEND_AUTOCONFIG_STAMP")"
+        echo "$selected" > "$LMS_BACKEND_AUTOCONFIG_STAMP"
         echo ">>> Selected runtime backend: $selected"
     else
         echo ">>> Failed to select preferred/fallback runtime backend. Check /tmp/lms-runtime-*.log"
