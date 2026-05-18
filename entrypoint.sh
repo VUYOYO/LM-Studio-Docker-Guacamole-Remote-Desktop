@@ -39,6 +39,7 @@ UPDATE_CHECK_MAX_TIME="${UPDATE_CHECK_MAX_TIME:-8}"
 DESKTOP_SYNC_INTERVAL="${DESKTOP_SYNC_INTERVAL:-20}"
 LM_ENSURE_RUNNING="${LM_ENSURE_RUNNING:-true}"
 LM_RESTART_INTERVAL="${LM_RESTART_INTERVAL:-2}"
+DESKTOP_LANGUAGE="${DESKTOP_LANGUAGE:-ENG}"
 
 if ! echo "$SCREEN_RESOLUTION" | grep -Eq '^[0-9]+x[0-9]+$'; then
     echo ">>> Invalid SCREEN_RESOLUTION=$SCREEN_RESOLUTION, fallback to 1600x900"
@@ -68,6 +69,19 @@ if ! echo "$LM_RESTART_INTERVAL" | grep -Eq '^[0-9]+$'; then
     echo ">>> Invalid LM_RESTART_INTERVAL=$LM_RESTART_INTERVAL, fallback to 2"
     LM_RESTART_INTERVAL="2"
 fi
+
+case "$(echo "$DESKTOP_LANGUAGE" | tr '[:lower:]' '[:upper:]')" in
+    ENG|EN|EN-US|EN_US)
+        DESKTOP_LANGUAGE="ENG"
+        ;;
+    CN-ZH|ZH-CN|ZH_CN|CN|ZH)
+        DESKTOP_LANGUAGE="CN-ZH"
+        ;;
+    *)
+        echo ">>> Invalid DESKTOP_LANGUAGE=$DESKTOP_LANGUAGE, fallback to ENG"
+        DESKTOP_LANGUAGE="ENG"
+        ;;
+esac
 
 render_guacamole_user_mapping() {
     local guac_dir="/app/guacamole-config"
@@ -459,8 +473,14 @@ else
     echo ">>> LM Studio is up to date (version $LOCAL_VERSION)."
 fi
 
-export LANG=zh_CN.UTF-8
-export LC_ALL=zh_CN.UTF-8
+if [ "$DESKTOP_LANGUAGE" = "CN-ZH" ]; then
+    export LANG=zh_CN.UTF-8
+    export LC_ALL=zh_CN.UTF-8
+else
+    export LANG=en_US.UTF-8
+    export LC_ALL=en_US.UTF-8
+fi
+echo ">>> Desktop language profile: ${DESKTOP_LANGUAGE} (${LANG})"
 export XDG_RUNTIME_DIR=/tmp/runtime-root
 export XDG_SESSION_TYPE=x11
 export GDK_BACKEND=x11

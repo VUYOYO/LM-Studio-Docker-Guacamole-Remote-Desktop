@@ -91,8 +91,8 @@ RUN mkdir -p /etc/apt/keyrings && \
     rm -rf /var/lib/apt/lists/*
 
 # 5. 生成中文 locale 并刷新字体缓存
-RUN locale-gen zh_CN.UTF-8 && \
-    update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 && \
+RUN locale-gen en_US.UTF-8 zh_CN.UTF-8 && \
+    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \
     fc-cache -f
 
 # 6. 准备持久化目录与桌面快捷方式
