@@ -6,6 +6,8 @@
 
 本项目在 Docker 中运行 LM Studio + XFCE 桌面，并通过 Guacamole 提供浏览器远程访问。
 
+![项目预览图](images/image.png)
+
 
 当前架构：
 

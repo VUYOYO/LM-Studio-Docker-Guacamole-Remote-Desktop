@@ -7,6 +7,8 @@ Author: VUYOYO
 This project runs LM Studio inside Docker with an XFCE desktop and provides browser remote access through Guacamole.
 The XFCE desktop provides a Chrome browser for viewing documents.
 
+![Project Preview](images/image.png)
+
 Current architecture:
 
 - LM Studio container: desktop, LM Studio app, x11vnc, API service (container internal port 1234)
