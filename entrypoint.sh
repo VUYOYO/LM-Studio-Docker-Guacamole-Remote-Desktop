@@ -36,6 +36,9 @@ GUAC_DISABLE_PASTE="${GUAC_DISABLE_PASTE:-false}"
 GUAC_CLIPBOARD_ENCODING="${GUAC_CLIPBOARD_ENCODING:-UTF-8}"
 SKIP_REMOTE_VERSION_CHECK="${SKIP_REMOTE_VERSION_CHECK:-true}"
 UPDATE_CHECK_MAX_TIME="${UPDATE_CHECK_MAX_TIME:-8}"
+LM_STUDIO_DOWNLOAD_URL="${LM_STUDIO_DOWNLOAD_URL:-}"
+LM_STUDIO_DOWNLOAD_RETRIES="${LM_STUDIO_DOWNLOAD_RETRIES:-3}"
+LM_STUDIO_DOWNLOAD_TIMEOUT="${LM_STUDIO_DOWNLOAD_TIMEOUT:-30}"
 DESKTOP_SYNC_INTERVAL="${DESKTOP_SYNC_INTERVAL:-20}"
 LM_ENSURE_RUNNING="${LM_ENSURE_RUNNING:-true}"
 LM_RESTART_INTERVAL="${LM_RESTART_INTERVAL:-2}"
@@ -68,6 +71,14 @@ fi
 if ! echo "$LM_RESTART_INTERVAL" | grep -Eq '^[0-9]+$'; then
     echo ">>> Invalid LM_RESTART_INTERVAL=$LM_RESTART_INTERVAL, fallback to 2"
     LM_RESTART_INTERVAL="2"
+fi
+if ! echo "$LM_STUDIO_DOWNLOAD_RETRIES" | grep -Eq '^[0-9]+$'; then
+    echo ">>> Invalid LM_STUDIO_DOWNLOAD_RETRIES=$LM_STUDIO_DOWNLOAD_RETRIES, fallback to 3"
+    LM_STUDIO_DOWNLOAD_RETRIES="3"
+fi
+if ! echo "$LM_STUDIO_DOWNLOAD_TIMEOUT" | grep -Eq '^[0-9]+$'; then
+    echo ">>> Invalid LM_STUDIO_DOWNLOAD_TIMEOUT=$LM_STUDIO_DOWNLOAD_TIMEOUT, fallback to 30"
+    LM_STUDIO_DOWNLOAD_TIMEOUT="30"
 fi
 
 case "$(echo "$DESKTOP_LANGUAGE" | tr '[:lower:]' '[:upper:]')" in
@@ -402,9 +413,36 @@ prepare_browser_command_wrappers
 sync_pinned_desktop_shortcuts
 monitor_pinned_desktop_shortcuts &
 
+download_lmstudio_appimage() {
+    local url="$1"
+    local out_file="$2"
+    local max_time=$((LM_STUDIO_DOWNLOAD_TIMEOUT * 10))
+
+    rm -f "$out_file" 2>/dev/null || true
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL \
+            --retry "$LM_STUDIO_DOWNLOAD_RETRIES" \
+            --retry-all-errors \
+            --connect-timeout "$LM_STUDIO_DOWNLOAD_TIMEOUT" \
+            --max-time "$max_time" \
+            -o "$out_file" \
+            "$url"
+    else
+        wget \
+            --tries="$LM_STUDIO_DOWNLOAD_RETRIES" \
+            --timeout="$LM_STUDIO_DOWNLOAD_TIMEOUT" \
+            -O "$out_file" \
+            "$url"
+    fi
+
+    [ -s "$out_file" ]
+}
+
 echo ">>> Checking latest LM Studio version..."
 DOWNLOAD_DIR="/app/lm-studio"
 APPIMAGE_NAME="LM-Studio.AppImage"
+APPIMAGE_PATH="$DOWNLOAD_DIR/$APPIMAGE_NAME"
 EXTRACT_DIR="$DOWNLOAD_DIR/squashfs-root"
 VERSION_FILE="$DOWNLOAD_DIR/.version"
 LATEST_URL=""
@@ -426,8 +464,13 @@ else
     echo ">>> Remote version check skipped."
 fi
 
+if [ -n "$LM_STUDIO_DOWNLOAD_URL" ]; then
+    LATEST_URL="$LM_STUDIO_DOWNLOAD_URL"
+    echo ">>> Using custom LM Studio download URL from LM_STUDIO_DOWNLOAD_URL"
+fi
+
 if [ -z "$LATEST_URL" ]; then
-    LATEST_URL="https://installers.lmstudio.ai/linux/x64/latest/LM-Studio.AppImage"
+    LATEST_URL="https://lmstudio.ai/download/latest/linux/x64"
 fi
 
 LOCAL_VERSION=""
@@ -450,8 +493,8 @@ fi
 
 if $NEED_UPDATE; then
     echo ">>> Downloading LM Studio package..."
-    if wget --tries=2 --timeout=20 -O "$DOWNLOAD_DIR/$APPIMAGE_NAME" "$LATEST_URL"; then
-        chmod +x "$DOWNLOAD_DIR/$APPIMAGE_NAME"
+    if download_lmstudio_appimage "$LATEST_URL" "$APPIMAGE_PATH"; then
+        chmod +x "$APPIMAGE_PATH"
         echo ">>> Extracting AppImage..."
         cd "$DOWNLOAD_DIR" || exit 1
         rm -rf squashfs-root
@@ -462,8 +505,7 @@ if $NEED_UPDATE; then
                 echo "$REMOTE_VERSION" > "$VERSION_FILE"
             fi
         else
-            echo ">>> Extraction failed."
-            rm -f "$APPIMAGE_NAME"
+            echo ">>> Extraction failed, will fallback to direct AppImage launch."
         fi
         cd / || exit 1
     else
@@ -567,7 +609,7 @@ LM_EXEC="$EXTRACT_DIR/lm-studio"
 if [ ! -x "$LM_EXEC" ] && [ -x "$EXTRACT_DIR/AppRun" ]; then
     LM_EXEC="$EXTRACT_DIR/AppRun"
 fi
-if [ ! -x "$LM_EXEC" ] && [ -x "$DOWNLOAD_DIR/$APPIMAGE_NAME" ]; then
+if [ ! -x "$LM_EXEC" ] && [ -x "$APPIMAGE_PATH" ]; then
     echo ">>> Re-extracting AppImage because executable is missing..."
     (cd "$DOWNLOAD_DIR" && rm -rf squashfs-root && "./$APPIMAGE_NAME" --appimage-extract) || true
     if [ -x "$EXTRACT_DIR/lm-studio" ]; then
@@ -576,9 +618,21 @@ if [ ! -x "$LM_EXEC" ] && [ -x "$DOWNLOAD_DIR/$APPIMAGE_NAME" ]; then
         LM_EXEC="$EXTRACT_DIR/AppRun"
     fi
 fi
+if [ ! -x "$LM_EXEC" ] && [ -x "$APPIMAGE_PATH" ]; then
+    LM_EXEC="$APPIMAGE_PATH"
+    echo ">>> Using direct AppImage launch fallback."
+fi
+
+launch_lmstudio() {
+    if [ "$LM_EXEC" = "$APPIMAGE_PATH" ]; then
+        APPIMAGE_EXTRACT_AND_RUN=1 "$LM_EXEC" --no-sandbox --server --host 0.0.0.0 --port 1234
+    else
+        "$LM_EXEC" --no-sandbox --server --host 0.0.0.0 --port 1234
+    fi
+}
 
 if [ -x "$LM_EXEC" ]; then
-    "$LM_EXEC" --no-sandbox --server --host 0.0.0.0 --port 1234 &
+    launch_lmstudio &
     echo ">>> LM Studio started with pid: $!"
 
     if [ "$LM_ENSURE_RUNNING" = "true" ]; then
@@ -586,14 +640,14 @@ if [ -x "$LM_EXEC" ]; then
             while true; do
                 if ! pgrep -f '(/app/lm-studio/squashfs-root/lm-studio|/app/lm-studio/squashfs-root/AppRun|/app/lm-studio/LM-Studio.AppImage)' >/dev/null 2>&1; then
                     echo ">>> LM Studio exited, restarting..."
-                    "$LM_EXEC" --no-sandbox --server --host 0.0.0.0 --port 1234 >/tmp/lmstudio-restart.log 2>&1 &
+                    launch_lmstudio >/tmp/lmstudio-restart.log 2>&1 &
                 fi
                 sleep "$LM_RESTART_INTERVAL"
             done
         ) &
     fi
 else
-    echo ">>> LM Studio executable not found under $EXTRACT_DIR"
+    echo ">>> LM Studio executable not found under $EXTRACT_DIR and no usable AppImage fallback at $APPIMAGE_PATH"
 fi
 
 setup_lms_runtime_backends() {
