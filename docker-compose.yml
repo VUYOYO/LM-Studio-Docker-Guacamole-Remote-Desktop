@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  lmstudio:
+    build: .
+    image: lmstudio-xfce:latest
+    container_name: lmstudio
+    runtime: nvidia
+    gpus: all
+    privileged: true
+    environment:
+      - ENABLE_GPU_RENDERING=${ENABLE_GPU_RENDERING:-true}
+      - FORCE_UPDATE=${FORCE_UPDATE:-false}
+      - AUTO_LOAD_MODEL=${AUTO_LOAD_MODEL:-false}
+      - CLEAN_LM_VENDOR_CACHE=${CLEAN_LM_VENDOR_CACHE:-false}
+      - ENABLE_GUAC_WEB=${ENABLE_GUAC_WEB:-true} #For debug only
+      - GUAC_WEB_PORT=${GUAC_WEB_PORT:-8888}
+      - GUAC_USERNAME=${GUAC_USERNAME:-lmstudio}
+      - GUAC_PASSWORD=${GUAC_PASSWORD:-lmstudio}
+      - GUAC_CONN_NAME=${GUAC_CONN_NAME:-LM Studio Shared Desktop}
+      - GUAC_PROTOCOL=${GUAC_PROTOCOL:-vnc}
+      - GUAC_TARGET_HOST=${GUAC_TARGET_HOST:-lmstudio}
+      - GUAC_TARGET_PORT=${GUAC_TARGET_PORT:-5900}
+      - GUAC_TARGET_PASSWORD=${GUAC_TARGET_PASSWORD:-lmstudio}
+      - GUAC_AUTORETRY=${GUAC_AUTORETRY:-3}
+      - GUAC_DISABLE_DISPLAY_RESIZE=${GUAC_DISABLE_DISPLAY_RESIZE:-false}
+      - GUAC_COLOR_DEPTH=${GUAC_COLOR_DEPTH:-24}
+      - GUAC_CURSOR=${GUAC_CURSOR:-remote}
+      - GUAC_DISABLE_COPY=${GUAC_DISABLE_COPY:-false}
+      - GUAC_DISABLE_PASTE=${GUAC_DISABLE_PASTE:-false}
+      - GUAC_CLIPBOARD_ENCODING=${GUAC_CLIPBOARD_ENCODING:-UTF-8}
+      - AUTO_INSTALL_GPU_BACKENDS=${AUTO_INSTALL_GPU_BACKENDS:-true}
+      - RUNTIME_ENGINE_FAMILY=${RUNTIME_ENGINE_FAMILY:-llama.cpp}
+      - PREFERRED_GPU_BACKEND=${PREFERRED_GPU_BACKEND:-cuda}
+      - FALLBACK_GPU_BACKEND=${FALLBACK_GPU_BACKEND:-vulkan}
+      - LMS_BACKEND_SETUP_TIMEOUT=${LMS_BACKEND_SETUP_TIMEOUT:-240}
+      - ENABLE_MULTI_CLIENT_1080P_LOCK=${ENABLE_MULTI_CLIENT_1080P_LOCK:-true}
+      - MULTI_CLIENT_RESOLUTION=${MULTI_CLIENT_RESOLUTION:-1920x1080}
+      - RESOLUTION_MONITOR_INTERVAL=${RESOLUTION_MONITOR_INTERVAL:-2}
+      - ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION=${ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION:-true}
+      - SINGLE_CLIENT_RESOLUTION_HINT=${SINGLE_CLIENT_RESOLUTION_HINT:-}
+      - DESKTOP_SYNC_INTERVAL=${DESKTOP_SYNC_INTERVAL:-20}
+      - LM_ENSURE_RUNNING=${LM_ENSURE_RUNNING:-true}
+      - LM_RESTART_INTERVAL=${LM_RESTART_INTERVAL:-2}
+      - XVFB_MAX_RESOLUTION=${XVFB_MAX_RESOLUTION:-4096x2160}
+      - DISPLAY_NUM=${DISPLAY_NUM:-99}
+      - SCREEN_RESOLUTION=${SCREEN_RESOLUTION:-1600x900}
+      - SCREEN_DEPTH=${SCREEN_DEPTH:-24}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video
+      - LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
+      # - MODEL_PATH=/root/.cache/lm-studio/models/gemma-4-E4B-it-GGUF
+      # - CONTEXT_LENGTH=32768
+    ports:
+      - "${LMS_API_PORT:-1234}:1234"
+    volumes:
+      - ./data:/app/lm-studio
+      - ./cache:/root/.cache/lm-studio
+      - ./models:/root/.cache/lm-studio/models
+      - ./guacamole:/app/guacamole-config
+      # 映射 Vulkan ICD 配置文件
+      - /usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/nvidia_icd.json:ro
+      - /etc/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:ro
+      # 映射 EGL 配置文件 (用于 GLX)
+      - /usr/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'pgrep -x x11vnc >/dev/null'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 25s
+    restart: unless-stopped
+
+  guacd:
+    image: guacamole/guacd:1.6.0
+    container_name: guacd
+    restart: unless-stopped
+
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    container_name: guacamole
+    depends_on:
+      guacd:
+        condition: service_started
+      lmstudio:
+        condition: service_healthy
+    environment:
+      - GUACD_HOSTNAME=${GUACD_HOSTNAME:-guacd}
+      - GUACD_PORT=${GUACD_PORT:-4822}
+      - WEBAPP_CONTEXT=${GUAC_WEBAPP_CONTEXT:-ROOT}
+      - GUACAMOLE_HOME=/config/guacamole
+      - GUAC_USERNAME=${GUAC_USERNAME:-lmstudio}
+      - GUAC_PASSWORD=${GUAC_PASSWORD:-lmstudio}
+      - "GUAC_CONN_NAME=${GUAC_CONN_NAME:-LM Studio Shared Desktop}"
+      - GUAC_PROTOCOL=${GUAC_PROTOCOL:-vnc}
+      - GUAC_TARGET_HOST=${GUAC_TARGET_HOST:-lmstudio}
+      - GUAC_TARGET_PORT=${GUAC_TARGET_PORT:-5900}
+      - GUAC_TARGET_PASSWORD=${GUAC_TARGET_PASSWORD:-lmstudio}
+      - GUAC_AUTORETRY=${GUAC_AUTORETRY:-3}
+      - GUAC_DISABLE_DISPLAY_RESIZE=${GUAC_DISABLE_DISPLAY_RESIZE:-false}
+      - GUAC_COLOR_DEPTH=${GUAC_COLOR_DEPTH:-24}
+      - GUAC_CURSOR=${GUAC_CURSOR:-remote}
+      - GUAC_DISABLE_COPY=${GUAC_DISABLE_COPY:-false}
+      - GUAC_DISABLE_PASTE=${GUAC_DISABLE_PASTE:-false}
+      - GUAC_CLIPBOARD_ENCODING=${GUAC_CLIPBOARD_ENCODING:-UTF-8}
+    ports:
+      - "${GUAC_WEB_PORT:-8888}:8080"
+    volumes:
+      - ./guacamole:/config/guacamole:ro
+    restart: unless-stopped

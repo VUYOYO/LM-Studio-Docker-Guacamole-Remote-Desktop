@@ -1,0 +1,810 @@
+#!/bin/bash
+
+FORCE_UPDATE="${FORCE_UPDATE:-false}"
+ENABLE_GPU_RENDERING="${ENABLE_GPU_RENDERING:-true}"
+AUTO_LOAD_MODEL="${AUTO_LOAD_MODEL:-false}"
+CLEAN_LM_VENDOR_CACHE="${CLEAN_LM_VENDOR_CACHE:-false}"
+ENABLE_GUAC_WEB="${ENABLE_GUAC_WEB:-true}"
+AUTO_INSTALL_GPU_BACKENDS="${AUTO_INSTALL_GPU_BACKENDS:-true}"
+RUNTIME_ENGINE_FAMILY="${RUNTIME_ENGINE_FAMILY:-llama.cpp}"
+PREFERRED_GPU_BACKEND="${PREFERRED_GPU_BACKEND:-cuda}"
+FALLBACK_GPU_BACKEND="${FALLBACK_GPU_BACKEND:-vulkan}"
+LMS_BACKEND_SETUP_TIMEOUT="${LMS_BACKEND_SETUP_TIMEOUT:-240}"
+DISPLAY_NUM="${DISPLAY_NUM:-99}"
+SCREEN_RESOLUTION="${SCREEN_RESOLUTION:-1600x900}"
+SCREEN_DEPTH="${SCREEN_DEPTH:-24}"
+ENABLE_MULTI_CLIENT_1080P_LOCK="${ENABLE_MULTI_CLIENT_1080P_LOCK:-true}"
+MULTI_CLIENT_RESOLUTION="${MULTI_CLIENT_RESOLUTION:-1920x1080}"
+RESOLUTION_MONITOR_INTERVAL="${RESOLUTION_MONITOR_INTERVAL:-2}"
+ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION="${ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION:-true}"
+SINGLE_CLIENT_RESOLUTION_HINT="${SINGLE_CLIENT_RESOLUTION_HINT:-}"
+XVFB_MAX_RESOLUTION="${XVFB_MAX_RESOLUTION:-4096x2160}"
+VNC_REQUESTED_RESOLUTION_FILE="${VNC_REQUESTED_RESOLUTION_FILE:-/tmp/vnc-requested-resolution}"
+GUAC_USERNAME="${GUAC_USERNAME:-lmstudio}"
+GUAC_PASSWORD="${GUAC_PASSWORD:-lmstudio}"
+GUAC_CONN_NAME="${GUAC_CONN_NAME:-LM Studio Shared Desktop}"
+GUAC_PROTOCOL="${GUAC_PROTOCOL:-vnc}"
+GUAC_TARGET_HOST="${GUAC_TARGET_HOST:-lmstudio}"
+GUAC_TARGET_PORT="${GUAC_TARGET_PORT:-5900}"
+GUAC_TARGET_PASSWORD="${GUAC_TARGET_PASSWORD:-lmstudio}"
+GUAC_AUTORETRY="${GUAC_AUTORETRY:-3}"
+GUAC_DISABLE_DISPLAY_RESIZE="${GUAC_DISABLE_DISPLAY_RESIZE:-false}"
+GUAC_COLOR_DEPTH="${GUAC_COLOR_DEPTH:-24}"
+GUAC_CURSOR="${GUAC_CURSOR:-remote}"
+GUAC_DISABLE_COPY="${GUAC_DISABLE_COPY:-false}"
+GUAC_DISABLE_PASTE="${GUAC_DISABLE_PASTE:-false}"
+GUAC_CLIPBOARD_ENCODING="${GUAC_CLIPBOARD_ENCODING:-UTF-8}"
+SKIP_REMOTE_VERSION_CHECK="${SKIP_REMOTE_VERSION_CHECK:-true}"
+UPDATE_CHECK_MAX_TIME="${UPDATE_CHECK_MAX_TIME:-8}"
+DESKTOP_SYNC_INTERVAL="${DESKTOP_SYNC_INTERVAL:-20}"
+LM_ENSURE_RUNNING="${LM_ENSURE_RUNNING:-true}"
+LM_RESTART_INTERVAL="${LM_RESTART_INTERVAL:-2}"
+
+if ! echo "$SCREEN_RESOLUTION" | grep -Eq '^[0-9]+x[0-9]+$'; then
+    echo ">>> Invalid SCREEN_RESOLUTION=$SCREEN_RESOLUTION, fallback to 1600x900"
+    SCREEN_RESOLUTION="1600x900"
+fi
+if ! echo "$SCREEN_DEPTH" | grep -Eq '^[0-9]+$'; then
+    echo ">>> Invalid SCREEN_DEPTH=$SCREEN_DEPTH, fallback to 24"
+    SCREEN_DEPTH="24"
+fi
+if ! echo "$MULTI_CLIENT_RESOLUTION" | grep -Eq '^[0-9]+x[0-9]+$'; then
+    echo ">>> Invalid MULTI_CLIENT_RESOLUTION=$MULTI_CLIENT_RESOLUTION, fallback to 1920x1080"
+    MULTI_CLIENT_RESOLUTION="1920x1080"
+fi
+if ! echo "$XVFB_MAX_RESOLUTION" | grep -Eq '^[0-9]+x[0-9]+$'; then
+    echo ">>> Invalid XVFB_MAX_RESOLUTION=$XVFB_MAX_RESOLUTION, fallback to 4096x2160"
+    XVFB_MAX_RESOLUTION="4096x2160"
+fi
+if [ -n "$SINGLE_CLIENT_RESOLUTION_HINT" ] && ! echo "$SINGLE_CLIENT_RESOLUTION_HINT" | grep -Eq '^[0-9]+x[0-9]+$'; then
+    echo ">>> Invalid SINGLE_CLIENT_RESOLUTION_HINT=$SINGLE_CLIENT_RESOLUTION_HINT, ignored"
+    SINGLE_CLIENT_RESOLUTION_HINT=""
+fi
+if ! echo "$DESKTOP_SYNC_INTERVAL" | grep -Eq '^[0-9]+$'; then
+    echo ">>> Invalid DESKTOP_SYNC_INTERVAL=$DESKTOP_SYNC_INTERVAL, fallback to 20"
+    DESKTOP_SYNC_INTERVAL="20"
+fi
+if ! echo "$LM_RESTART_INTERVAL" | grep -Eq '^[0-9]+$'; then
+    echo ">>> Invalid LM_RESTART_INTERVAL=$LM_RESTART_INTERVAL, fallback to 2"
+    LM_RESTART_INTERVAL="2"
+fi
+
+render_guacamole_user_mapping() {
+    local guac_dir="/app/guacamole-config"
+    local guac_file="$guac_dir/user-mapping.xml"
+
+    [ "$ENABLE_GUAC_WEB" != "true" ] && return 0
+    [ ! -d "$guac_dir" ] && return 0
+
+    cat > "$guac_file" <<EOF
+<user-mapping>
+    <authorize username="$GUAC_USERNAME" password="$GUAC_PASSWORD">
+        <connection name="$GUAC_CONN_NAME">
+            <protocol>$GUAC_PROTOCOL</protocol>
+            <param name="hostname">$GUAC_TARGET_HOST</param>
+            <param name="port">$GUAC_TARGET_PORT</param>
+            <param name="password">$GUAC_TARGET_PASSWORD</param>
+            <param name="autoretry">$GUAC_AUTORETRY</param>
+            <param name="disable-display-resize">$GUAC_DISABLE_DISPLAY_RESIZE</param>
+            <param name="color-depth">$GUAC_COLOR_DEPTH</param>
+            <param name="cursor">$GUAC_CURSOR</param>
+            <param name="disable-copy">$GUAC_DISABLE_COPY</param>
+            <param name="disable-paste">$GUAC_DISABLE_PASTE</param>
+            <param name="clipboard-encoding">$GUAC_CLIPBOARD_ENCODING</param>
+        </connection>
+    </authorize>
+</user-mapping>
+EOF
+
+    echo ">>> Guacamole user-mapping.xml rendered from environment: $guac_file"
+}
+
+render_guacamole_user_mapping
+
+prepare_launcher_directories() {
+    mkdir -p /root/Desktop /root/.local/share/applications /usr/local/share/applications /root/.config
+}
+
+trust_desktop_file() {
+    local desktop_file="$1"
+
+    [ -f "$desktop_file" ] || return 0
+    chmod +x "$desktop_file" >/dev/null 2>&1 || true
+    if command -v gio >/dev/null 2>&1; then
+        gio set "$desktop_file" metadata::trusted true >/dev/null 2>&1 || true
+    fi
+}
+
+sync_pinned_desktop_shortcuts() {
+    local desktop_dir="/root/Desktop"
+    local src=""
+    local target=""
+    local base=""
+    local name=""
+
+    prepare_launcher_directories
+    mkdir -p "$desktop_dir"
+
+    rm -f /root/Desktop/app-store.desktop /usr/local/share/applications/app-store.desktop /root/.local/share/applications/app-store.desktop /usr/local/bin/open-app-store 2>/dev/null || true
+
+    for name in google-chrome.desktop; do
+        src=""
+        for target in \
+            "/root/.local/share/applications/$name" \
+            "/usr/local/share/applications/$name" \
+            "/usr/share/applications/$name"; do
+            if [ -f "$target" ]; then
+                src="$target"
+                break
+            fi
+        done
+
+        if [ -n "$src" ]; then
+            cp -f "$src" "$desktop_dir/$name" 2>/dev/null || true
+            trust_desktop_file "$src"
+            trust_desktop_file "$desktop_dir/$name"
+        fi
+    done
+
+    find "$desktop_dir" -maxdepth 1 -type f -name '*.desktop' -print0 2>/dev/null | while IFS= read -r -d '' src; do
+        base="$(basename "$src")"
+        case "$base" in
+            google-chrome.desktop)
+                trust_desktop_file "$src"
+                ;;
+            *)
+                rm -f "$src" || true
+                ;;
+        esac
+    done
+}
+
+prepare_browser_command_wrappers() {
+    local xwww_wrapper="/usr/local/bin/x-www-browser"
+    local sensible_wrapper="/usr/local/bin/sensible-browser"
+    local exo_wrapper="/usr/local/bin/exo-open"
+    local xdg_wrapper="/usr/local/bin/xdg-open"
+
+    cat > "$xwww_wrapper" <<'EOF'
+#!/bin/sh
+exec /usr/local/bin/google-chrome-safe "$@"
+EOF
+    chmod +x "$xwww_wrapper"
+
+    cat > "$sensible_wrapper" <<'EOF'
+#!/bin/sh
+exec /usr/local/bin/google-chrome-safe "$@"
+EOF
+    chmod +x "$sensible_wrapper"
+
+    if [ -x /usr/bin/exo-open ]; then
+        cat > "$exo_wrapper" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--launch" ] && [ "$2" = "WebBrowser" ]; then
+    shift 2
+    exec /usr/local/bin/google-chrome-safe "$@"
+fi
+case "$1" in
+    http://*|https://*|about:*|chrome://*|www.*)
+        exec /usr/local/bin/google-chrome-safe "$1"
+        ;;
+esac
+exec /usr/bin/exo-open "$@"
+EOF
+        chmod +x "$exo_wrapper"
+    fi
+
+    cat > "$xdg_wrapper" <<'EOF'
+#!/bin/sh
+case "$1" in
+    --help|--manual|--version)
+        exec /usr/bin/xdg-open "$@"
+        ;;
+    http://*|https://*|about:*|chrome://*|www.*)
+        exec /usr/local/bin/google-chrome-safe "$1"
+        ;;
+esac
+exec /usr/bin/xdg-open "$@"
+EOF
+    chmod +x "$xdg_wrapper"
+}
+
+monitor_pinned_desktop_shortcuts() {
+    local interval="$DESKTOP_SYNC_INTERVAL"
+    [ -z "$interval" ] && interval=20
+
+    while true; do
+        sync_pinned_desktop_shortcuts
+        sleep "$interval"
+    done
+}
+
+prepare_chrome_launcher() {
+    local chrome_wrapper="/usr/local/bin/google-chrome-safe"
+    local chrome_override="/usr/local/share/applications/google-chrome.desktop"
+    local desktop_file=""
+    local source_file=""
+
+    if [ ! -x /usr/bin/google-chrome-stable ]; then
+        echo ">>> google-chrome-stable not found, skip launcher patch."
+        return 0
+    fi
+
+    prepare_launcher_directories
+
+    cat > "$chrome_wrapper" <<'EOF'
+#!/bin/sh
+exec /usr/bin/google-chrome-stable --no-sandbox --disable-dev-shm-usage "$@"
+EOF
+    chmod +x "$chrome_wrapper"
+
+    for source_file in /usr/share/applications/google-chrome.desktop /root/.local/share/applications/google-chrome.desktop; do
+        if [ -f "$source_file" ]; then
+            cp -f "$source_file" "$chrome_override" >/dev/null 2>&1 || true
+            break
+        fi
+    done
+
+    if [ ! -f "$chrome_override" ]; then
+        cat > "$chrome_override" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Google Chrome
+Comment=Access the Internet
+Exec=/usr/local/bin/google-chrome-safe %U
+Icon=google-chrome
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;image/gif;image/jpeg;image/png;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+EOF
+    fi
+
+    for desktop_file in \
+        "$chrome_override" \
+        /usr/share/applications/google-chrome.desktop \
+        /root/Desktop/google-chrome.desktop \
+        /root/.local/share/applications/google-chrome.desktop; do
+        [ -f "$desktop_file" ] || continue
+
+        sed -i -E 's|^Exec=.*|Exec=/usr/local/bin/google-chrome-safe %U|' "$desktop_file" || true
+        chmod +x "$desktop_file" || true
+
+        if command -v gio >/dev/null 2>&1; then
+            gio set "$desktop_file" metadata::trusted true >/dev/null 2>&1 || true
+        fi
+    done
+
+    echo ">>> Chrome launcher patched for container root startup."
+}
+
+set_default_browser_to_chrome() {
+    local mimeapps="/root/.config/mimeapps.list"
+    local local_mimeapps="/root/.local/share/applications/mimeapps.list"
+    local xfce_helpers="/root/.config/xfce4/helpers.rc"
+
+    prepare_launcher_directories
+    mkdir -p /root/.config/xfce4
+
+    cat > "$mimeapps" <<'EOF'
+[Default Applications]
+x-scheme-handler/http=google-chrome.desktop
+x-scheme-handler/https=google-chrome.desktop
+x-scheme-handler/about=google-chrome.desktop
+x-scheme-handler/unknown=google-chrome.desktop
+text/html=google-chrome.desktop
+
+[Added Associations]
+x-scheme-handler/http=google-chrome.desktop;
+x-scheme-handler/https=google-chrome.desktop;
+text/html=google-chrome.desktop;
+EOF
+
+    cat > "$local_mimeapps" <<'EOF'
+[Default Applications]
+x-scheme-handler/http=google-chrome.desktop
+x-scheme-handler/https=google-chrome.desktop
+text/html=google-chrome.desktop
+EOF
+
+    cat > "$xfce_helpers" <<'EOF'
+WebBrowser=custom-WebBrowser
+WebBrowserNeedsTerminal=false
+WebBrowserCustom=/usr/local/bin/google-chrome-safe %s
+EOF
+
+    export BROWSER=/usr/local/bin/google-chrome-safe
+
+    if command -v xdg-settings >/dev/null 2>&1; then
+        xdg-settings set default-web-browser google-chrome.desktop >/dev/null 2>&1 || true
+    fi
+
+    if command -v xdg-mime >/dev/null 2>&1; then
+        xdg-mime default google-chrome.desktop x-scheme-handler/http >/dev/null 2>&1 || true
+        xdg-mime default google-chrome.desktop x-scheme-handler/https >/dev/null 2>&1 || true
+        xdg-mime default google-chrome.desktop text/html >/dev/null 2>&1 || true
+    fi
+
+    if command -v update-alternatives >/dev/null 2>&1; then
+        update-alternatives --set x-www-browser /usr/local/bin/google-chrome-safe >/dev/null 2>&1 || true
+        update-alternatives --set gnome-www-browser /usr/local/bin/google-chrome-safe >/dev/null 2>&1 || true
+    fi
+
+    echo ">>> Default browser set to Google Chrome."
+}
+
+prepare_lmstudio_launcher() {
+    local lm_wrapper="/usr/local/bin/start-lmstudio"
+    local lm_desktop="/usr/local/share/applications/lmstudio.desktop"
+
+    prepare_launcher_directories
+
+    cat > "$lm_wrapper" <<'EOF'
+#!/bin/sh
+DOWNLOAD_DIR="/app/lm-studio"
+EXTRACT_DIR="$DOWNLOAD_DIR/squashfs-root"
+APPIMAGE_PATH="$DOWNLOAD_DIR/LM-Studio.AppImage"
+LM_EXEC="$EXTRACT_DIR/lm-studio"
+
+if [ ! -x "$LM_EXEC" ] && [ -x "$EXTRACT_DIR/AppRun" ]; then
+    LM_EXEC="$EXTRACT_DIR/AppRun"
+fi
+if [ ! -x "$LM_EXEC" ] && [ -x "$APPIMAGE_PATH" ]; then
+    LM_EXEC="$APPIMAGE_PATH"
+fi
+
+if [ ! -x "$LM_EXEC" ]; then
+    if command -v xmessage >/dev/null 2>&1; then
+        xmessage "LM Studio executable not found under /app/lm-studio."
+    fi
+    exit 1
+fi
+
+exec "$LM_EXEC" --no-sandbox --server --host 0.0.0.0 --port 1234 "$@"
+EOF
+    chmod +x "$lm_wrapper"
+
+    cat > "$lm_desktop" <<'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LM Studio
+Name[zh_CN]=LM Studio
+Comment=Launch LM Studio
+Comment[zh_CN]=启动 LM Studio
+Exec=/usr/local/bin/start-lmstudio
+Icon=applications-development
+Terminal=false
+Categories=Development;AI;
+StartupNotify=true
+EOF
+
+    trust_desktop_file "$lm_desktop"
+}
+
+prepare_chrome_launcher
+prepare_browser_command_wrappers
+sync_pinned_desktop_shortcuts
+monitor_pinned_desktop_shortcuts &
+
+echo ">>> Checking latest LM Studio version..."
+DOWNLOAD_DIR="/app/lm-studio"
+APPIMAGE_NAME="LM-Studio.AppImage"
+EXTRACT_DIR="$DOWNLOAD_DIR/squashfs-root"
+VERSION_FILE="$DOWNLOAD_DIR/.version"
+LATEST_URL=""
+REMOTE_VERSION=""
+
+if [ "$SKIP_REMOTE_VERSION_CHECK" != "true" ]; then
+    LATEST_URL=$(curl -fsSI --max-time "$UPDATE_CHECK_MAX_TIME" "https://lmstudio.ai/download/latest/linux/x64" 2>/dev/null | grep -i "location:" | awk '{print $2}' | tr -d '\r')
+    if [ -n "$LATEST_URL" ]; then
+        REMOTE_VERSION=$(echo "$LATEST_URL" | grep -oP '\d+\.\d+\.\d+' | head -1)
+        if [ -n "$REMOTE_VERSION" ]; then
+            echo ">>> Latest remote version: $REMOTE_VERSION"
+        else
+            echo ">>> Remote URL fetched but version parse failed, skip remote update decision."
+        fi
+    else
+        echo ">>> Remote version check timed out/unavailable, skip remote update decision."
+    fi
+else
+    echo ">>> Remote version check skipped."
+fi
+
+if [ -z "$LATEST_URL" ]; then
+    LATEST_URL="https://installers.lmstudio.ai/linux/x64/latest/LM-Studio.AppImage"
+fi
+
+LOCAL_VERSION=""
+[ -f "$VERSION_FILE" ] && LOCAL_VERSION=$(cat "$VERSION_FILE")
+
+HAS_LOCAL_INSTALL=false
+if [ -x "$EXTRACT_DIR/lm-studio" ] || [ -x "$EXTRACT_DIR/AppRun" ] || [ -x "$DOWNLOAD_DIR/$APPIMAGE_NAME" ]; then
+    HAS_LOCAL_INSTALL=true
+fi
+
+NEED_UPDATE=false
+if [ "$FORCE_UPDATE" = "true" ]; then
+    NEED_UPDATE=true
+elif [ -n "$REMOTE_VERSION" ] && [ "$LOCAL_VERSION" != "$REMOTE_VERSION" ]; then
+    NEED_UPDATE=true
+elif [ "$HAS_LOCAL_INSTALL" = "false" ]; then
+    echo ">>> No local LM Studio installation found, downloading fallback package."
+    NEED_UPDATE=true
+fi
+
+if $NEED_UPDATE; then
+    echo ">>> Downloading LM Studio package..."
+    if wget --tries=2 --timeout=20 -O "$DOWNLOAD_DIR/$APPIMAGE_NAME" "$LATEST_URL"; then
+        chmod +x "$DOWNLOAD_DIR/$APPIMAGE_NAME"
+        echo ">>> Extracting AppImage..."
+        cd "$DOWNLOAD_DIR" || exit 1
+        rm -rf squashfs-root
+        "./$APPIMAGE_NAME" --appimage-extract
+        if [ -d squashfs-root ]; then
+            echo ">>> Extraction successful."
+            if [ -n "$REMOTE_VERSION" ]; then
+                echo "$REMOTE_VERSION" > "$VERSION_FILE"
+            fi
+        else
+            echo ">>> Extraction failed."
+            rm -f "$APPIMAGE_NAME"
+        fi
+        cd / || exit 1
+    else
+        echo ">>> Download failed, keeping existing local installation if present."
+    fi
+else
+    echo ">>> LM Studio is up to date (version $LOCAL_VERSION)."
+fi
+
+export LANG=zh_CN.UTF-8
+export LC_ALL=zh_CN.UTF-8
+export XDG_RUNTIME_DIR=/tmp/runtime-root
+export XDG_SESSION_TYPE=x11
+export GDK_BACKEND=x11
+export NO_AT_BRIDGE=1
+export BROWSER=/usr/local/bin/google-chrome-safe
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+
+if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && ! echo "$DBUS_SESSION_BUS_ADDRESS" | grep -Eq '^(unix|tcp):'; then
+    unset DBUS_SESSION_BUS_ADDRESS
+fi
+if [ -n "${DBUS_SYSTEM_BUS_ADDRESS:-}" ] && ! echo "$DBUS_SYSTEM_BUS_ADDRESS" | grep -Eq '^(unix|tcp):'; then
+    unset DBUS_SYSTEM_BUS_ADDRESS
+fi
+
+GPU_AVAILABLE=false
+GPU_RUNTIME_AVAILABLE=false
+if [ -e /dev/nvidiactl ] || [ -e /dev/nvidia0 ] || [ -e /proc/driver/nvidia/version ] || command -v nvidia-smi >/dev/null 2>&1; then
+    GPU_RUNTIME_AVAILABLE=true
+    export __GLX_VENDOR_LIBRARY_NAME=nvidia
+    if [ -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
+        export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+    elif [ -f /etc/glvnd/egl_vendor.d/10_nvidia.json ]; then
+        export __EGL_VENDOR_LIBRARY_FILENAMES=/etc/glvnd/egl_vendor.d/10_nvidia.json
+    fi
+    unset LIBGL_ALWAYS_SOFTWARE
+    echo ">>> NVIDIA runtime detected in container."
+    ls -l /dev/nvidia* 2>/dev/null || true
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        nvidia-smi || true
+    fi
+fi
+
+if [ "$GPU_RUNTIME_AVAILABLE" = "true" ] && [ "${ENABLE_GPU_RENDERING}" = "true" ]; then
+    GPU_AVAILABLE=true
+elif [ "$GPU_RUNTIME_AVAILABLE" = "true" ]; then
+    echo ">>> NVIDIA runtime is available, but desktop GPU rendering is disabled by ENABLE_GPU_RENDERING=false."
+else
+    echo ">>> NVIDIA runtime not detected, desktop will use software rendering."
+fi
+
+echo ">>> Starting D-Bus..."
+mkdir -p /run/dbus
+dbus-daemon --system --fork
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+if command -v dbus-launch >/dev/null 2>&1; then
+    eval "$(dbus-launch --sh-syntax)"
+fi
+
+echo ">>> Starting Xvfb..."
+Xvfb ":${DISPLAY_NUM}" -screen 0 "${XVFB_MAX_RESOLUTION}x${SCREEN_DEPTH}" +extension GLX +render &
+sleep 2
+export DISPLAY=":${DISPLAY_NUM}"
+
+if [ "$SCREEN_RESOLUTION" != "$XVFB_MAX_RESOLUTION" ]; then
+    xrandr --display ":${DISPLAY_NUM}" -s "$SCREEN_RESOLUTION" >/dev/null 2>&1 || \
+        xrandr --display ":${DISPLAY_NUM}" --fb "$SCREEN_RESOLUTION" >/dev/null 2>&1 || true
+fi
+
+echo ">>> Starting Xfce4 desktop..."
+if [ "$GPU_AVAILABLE" = "true" ]; then
+    startxfce4 &
+else
+    LIBGL_ALWAYS_SOFTWARE=1 GSK_RENDERER=cairo startxfce4 &
+fi
+sleep 5
+
+set_default_browser_to_chrome
+
+echo ">>> Starting Fcitx5..."
+fcitx5 -d || true
+export GTK_IM_MODULE=fcitx
+export QT_IM_MODULE=fcitx
+export XMODIFIERS=@im=fcitx
+
+if [ "$CLEAN_LM_VENDOR_CACHE" = "true" ]; then
+    echo ">>> Cleaning stale LM Studio vendor backend cache..."
+    rm -rf /root/.cache/lm-studio/extensions/backends/vendor/_amphibian 2>/dev/null || true
+    rm -rf /root/.cache/lm-studio/extensions/backends/runtime-index* 2>/dev/null || true
+fi
+
+echo ">>> Launching LM Studio (API on port 1234)..."
+LM_EXEC="$EXTRACT_DIR/lm-studio"
+if [ ! -x "$LM_EXEC" ] && [ -x "$EXTRACT_DIR/AppRun" ]; then
+    LM_EXEC="$EXTRACT_DIR/AppRun"
+fi
+if [ ! -x "$LM_EXEC" ] && [ -x "$DOWNLOAD_DIR/$APPIMAGE_NAME" ]; then
+    echo ">>> Re-extracting AppImage because executable is missing..."
+    (cd "$DOWNLOAD_DIR" && rm -rf squashfs-root && "./$APPIMAGE_NAME" --appimage-extract) || true
+    if [ -x "$EXTRACT_DIR/lm-studio" ]; then
+        LM_EXEC="$EXTRACT_DIR/lm-studio"
+    elif [ -x "$EXTRACT_DIR/AppRun" ]; then
+        LM_EXEC="$EXTRACT_DIR/AppRun"
+    fi
+fi
+
+if [ -x "$LM_EXEC" ]; then
+    "$LM_EXEC" --no-sandbox --server --host 0.0.0.0 --port 1234 &
+    echo ">>> LM Studio started with pid: $!"
+
+    if [ "$LM_ENSURE_RUNNING" = "true" ]; then
+        (
+            while true; do
+                if ! pgrep -f '(/app/lm-studio/squashfs-root/lm-studio|/app/lm-studio/squashfs-root/AppRun|/app/lm-studio/LM-Studio.AppImage)' >/dev/null 2>&1; then
+                    echo ">>> LM Studio exited, restarting..."
+                    "$LM_EXEC" --no-sandbox --server --host 0.0.0.0 --port 1234 >/tmp/lmstudio-restart.log 2>&1 &
+                fi
+                sleep "$LM_RESTART_INTERVAL"
+            done
+        ) &
+    fi
+else
+    echo ">>> LM Studio executable not found under $EXTRACT_DIR"
+fi
+
+setup_lms_runtime_backends() {
+    local deadline=$((SECONDS + LMS_BACKEND_SETUP_TIMEOUT))
+    local lms_bin=""
+    local selected=""
+    local ready=false
+    local primary_queries=("${RUNTIME_ENGINE_FAMILY}:${PREFERRED_GPU_BACKEND}")
+    local fallback_queries=("${RUNTIME_ENGINE_FAMILY}:${FALLBACK_GPU_BACKEND}")
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if [ -x /root/.cache/lm-studio/bin/lms ]; then
+            lms_bin="/root/.cache/lm-studio/bin/lms"
+            break
+        fi
+        if command -v lms >/dev/null 2>&1; then
+            lms_bin="$(command -v lms)"
+            break
+        fi
+        sleep 2
+    done
+
+    if [ -z "$lms_bin" ]; then
+        echo ">>> lms CLI not found within timeout, skip runtime backend auto-setup."
+        return 0
+    fi
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if "$lms_bin" runtime ls >/tmp/lms-runtime-ready.log 2>&1; then
+            ready=true
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$ready" != "true" ]; then
+        echo ">>> lms CLI found but runtime service is not ready within timeout, skip runtime backend auto-setup."
+        return 0
+    fi
+
+    echo ">>> Runtime backend auto-setup with $lms_bin (family: $RUNTIME_ENGINE_FAMILY, preferred: $PREFERRED_GPU_BACKEND, fallback: $FALLBACK_GPU_BACKEND)"
+    "$lms_bin" runtime survey >/tmp/lms-runtime-survey.log 2>&1 || true
+
+    for q in "${primary_queries[@]}"; do
+        "$lms_bin" runtime get "$q" -y >>/tmp/lms-runtime-get-primary.log 2>&1 || true
+    done
+    if [ -n "$FALLBACK_GPU_BACKEND" ] && [ "$FALLBACK_GPU_BACKEND" != "$PREFERRED_GPU_BACKEND" ]; then
+        for q in "${fallback_queries[@]}"; do
+            "$lms_bin" runtime get "$q" -y >>/tmp/lms-runtime-get-fallback.log 2>&1 || true
+        done
+    fi
+
+    for q in "${primary_queries[@]}"; do
+        for _ in 1 2 3 4 5; do
+            if "$lms_bin" runtime select "$q" --latest >>/tmp/lms-runtime-select.log 2>&1; then
+                selected="$q"
+                break
+            fi
+            sleep 2
+        done
+        [ -n "$selected" ] && break
+    done
+
+    if [ -z "$selected" ] && [ -n "$FALLBACK_GPU_BACKEND" ] && [ "$FALLBACK_GPU_BACKEND" != "$PREFERRED_GPU_BACKEND" ]; then
+        for q in "${fallback_queries[@]}"; do
+            for _ in 1 2 3 4 5; do
+                if "$lms_bin" runtime select "$q" --latest >>/tmp/lms-runtime-select.log 2>&1; then
+                    selected="$q"
+                    break
+                fi
+                sleep 2
+            done
+            [ -n "$selected" ] && break
+        done
+    fi
+
+    if [ -n "$selected" ]; then
+        echo ">>> Selected runtime backend: $selected"
+    else
+        echo ">>> Failed to select preferred/fallback runtime backend. Check /tmp/lms-runtime-*.log"
+    fi
+
+    "$lms_bin" runtime ls >/tmp/lms-runtime-ls.log 2>&1 || true
+}
+
+if [ "$GPU_RUNTIME_AVAILABLE" = "true" ] && [ "$AUTO_INSTALL_GPU_BACKENDS" = "true" ]; then
+    setup_lms_runtime_backends &
+fi
+
+count_vnc_clients() {
+    awk '
+    FNR > 1 {
+        split($2, localAddr, ":");
+        split($3, remoteAddr, ":");
+        remoteIp = toupper(remoteAddr[1]);
+        if (toupper(localAddr[2]) == "170C" && $4 == "01" && remoteIp != "0100007F" && remoteIp != "00000000000000000000000001000000") {
+            count++;
+        }
+    }
+    END { print count + 0 }
+    ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+extract_requested_resolution_from_vnc_log() {
+    local line="$1"
+    local requested
+    local previous
+    requested="$(echo "$line" | sed -n 's/.*Client requested resolution change to (\([0-9]\+x[0-9]\+\)).*/\1/p')"
+    if [ -n "$requested" ] && echo "$requested" | grep -Eq '^[0-9]+x[0-9]+$'; then
+        previous=""
+        if [ -f "$VNC_REQUESTED_RESOLUTION_FILE" ]; then
+            previous="$(tr -d ' \r\n' < "$VNC_REQUESTED_RESOLUTION_FILE")"
+        fi
+        if [ "$requested" != "$previous" ]; then
+            echo ">>> Captured VNC client requested resolution: $requested"
+        fi
+        echo "$requested" > "$VNC_REQUESTED_RESOLUTION_FILE"
+    fi
+}
+
+start_x11vnc_server() {
+    local cmd=(
+        x11vnc
+        -display ":${DISPLAY_NUM}"
+        -rfbport 5900
+        -forever
+        -shared
+        -rfbauth /root/.vnc/passwd
+        -listen "0.0.0.0"
+        -xkb
+        -noxdamage
+        -repeat
+        -xrandr newfbsize
+        -nowf
+        -noscr
+        -wait 10
+        -defer 10
+    )
+
+    if [ "$ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION" = "true" ]; then
+        rm -f "$VNC_REQUESTED_RESOLUTION_FILE"
+        if [ -n "$SINGLE_CLIENT_RESOLUTION_HINT" ]; then
+            echo "$SINGLE_CLIENT_RESOLUTION_HINT" > "$VNC_REQUESTED_RESOLUTION_FILE"
+        fi
+
+        "${cmd[@]}" 2>&1 | while IFS= read -r line; do
+            echo "$line"
+            extract_requested_resolution_from_vnc_log "$line"
+        done &
+    else
+        "${cmd[@]}" &
+    fi
+}
+
+monitor_resolution_policy() {
+    local display_addr=":${DISPLAY_NUM}"
+    local interval="$RESOLUTION_MONITOR_INTERVAL"
+    local active_clients="0"
+    local current_resolution=""
+    local after_resolution=""
+    local target_resolution=""
+    local requested_resolution=""
+    [ -z "$interval" ] && interval=2
+
+    while true; do
+        active_clients="$(count_vnc_clients)"
+        target_resolution=""
+
+        if [ "$active_clients" -gt 1 ]; then
+            target_resolution="$MULTI_CLIENT_RESOLUTION"
+        elif [ "$ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION" = "true" ]; then
+            requested_resolution=""
+            if [ -f "$VNC_REQUESTED_RESOLUTION_FILE" ]; then
+                requested_resolution="$(tr -d ' \r\n' < "$VNC_REQUESTED_RESOLUTION_FILE")"
+            elif [ -n "$SINGLE_CLIENT_RESOLUTION_HINT" ]; then
+                requested_resolution="$SINGLE_CLIENT_RESOLUTION_HINT"
+            fi
+
+            if echo "$requested_resolution" | grep -Eq '^[0-9]+x[0-9]+$'; then
+                target_resolution="$requested_resolution"
+            fi
+        fi
+
+        if [ -n "$target_resolution" ]; then
+            current_resolution="$(xrandr --display "$display_addr" --current 2>/dev/null | awk '/\*/ { print $1; exit }')"
+            if [ "$current_resolution" != "$target_resolution" ]; then
+                xrandr --display "$display_addr" -s "$target_resolution" >/dev/null 2>&1 || \
+                    xrandr --display "$display_addr" --fb "$target_resolution" >/dev/null 2>&1 || \
+                    xrandr --display "$display_addr" --output default --mode "$target_resolution" >/dev/null 2>&1 || true
+                after_resolution="$(xrandr --display "$display_addr" --current 2>/dev/null | awk '/\*/ { print $1; exit }')"
+                if [ "$after_resolution" = "$target_resolution" ]; then
+                    echo ">>> Resolution policy applied: ${target_resolution} (active VNC clients: ${active_clients})"
+                fi
+            fi
+        fi
+
+        sleep "$interval"
+    done
+}
+
+if [ "$ENABLE_GUAC_WEB" = "true" ]; then
+    echo ">>> Starting shared x11vnc server on :${DISPLAY_NUM}..."
+    mkdir -p /root/.vnc
+    x11vnc -storepasswd "$GUAC_TARGET_PASSWORD" /root/.vnc/passwd
+    start_x11vnc_server
+    sleep 2
+
+    if [ "$ENABLE_MULTI_CLIENT_1080P_LOCK" = "true" ]; then
+        echo ">>> Resolution policy: single client uses dynamic resize, multi-client locks to ${MULTI_CLIENT_RESOLUTION}."
+        monitor_resolution_policy &
+    fi
+fi
+
+if [ "$AUTO_LOAD_MODEL" = "true" ] && [ -n "$MODEL_PATH" ]; then
+    echo ">>> Waiting for LM Studio to initialize (40s)..."
+    sleep 40
+    if [ -f ~/.cache/lm-studio/bin/lms ]; then
+        echo ">>> Loading model via CLI: $MODEL_PATH"
+        ~/.cache/lm-studio/bin/lms load --gpu max --context-length "${CONTEXT_LENGTH:-4096}" "$MODEL_PATH" &
+        echo ">>> Model loading initiated in background."
+    else
+        echo ">>> LM Studio CLI not found."
+    fi
+else
+    echo ">>> AUTO_LOAD_MODEL is disabled. Use GUI manually."
+fi
+
+echo "==============================================="
+echo "   Web Guacamole : http://<host-ip>:${GUAC_WEB_PORT:-8888}"
+echo "   Shared desktop bus: VNC 5900"
+echo "   API port: 1234"
+echo "==============================================="
+
+tail -f /dev/null
