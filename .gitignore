@@ -2,6 +2,7 @@
 data/
 cache/
 models/
+__pycache__/
 
 # Guacamole runtime-generated mapping
 guacamole/user-mapping.xml
