@@ -40,7 +40,7 @@ CUDA readiness on host is required for NVIDIA path.
 - Docker daemon can run GPU containers
 
 ### 2.3 Windows Host
-- If you are using a Windows computer, it's better to use LM Studio on the Windows platform.
+- If you are using a Windows computer, it's better to use the Windows version of LM Studio.
 - Windows 10/11
 - Docker Desktop with WSL2 backend enabled
 - Latest NVIDIA driver installed on host
