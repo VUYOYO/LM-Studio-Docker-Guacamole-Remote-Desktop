@@ -32,8 +32,15 @@ Additional features of the project:
 
 CUDA readiness on host is required for NVIDIA path.
 
-### 2.2 Windows Host
 
+### 2.2 Linux Host (recommended path)
+
+- NVIDIA driver installed and working (`nvidia-smi` available)
+- NVIDIA Container Toolkit installed
+- Docker daemon can run GPU containers
+
+### 2.3 Windows Host
+- If you are using a Windows computer, it's better to use LM Studio on the Windows platform.
 - Windows 10/11
 - Docker Desktop with WSL2 backend enabled
 - Latest NVIDIA driver installed on host
@@ -41,12 +48,6 @@ CUDA readiness on host is required for NVIDIA path.
 - Host check commands:
 	- `nvidia-smi` should run successfully in Windows terminal
 	- `wsl -d <your-distro> nvidia-smi` should run successfully inside WSL
-
-### 2.3 Linux Host (recommended path)
-
-- NVIDIA driver installed and working (`nvidia-smi` available)
-- NVIDIA Container Toolkit installed
-- Docker daemon can run GPU containers
 
 ### 2.4 CUDA / GPU Runtime Completeness Checklist
 

@@ -33,8 +33,14 @@
 
 如果使用 NVIDIA 路线，需要保证宿主机 CUDA/GPU 运行时环境可用。
 
-### 2.2 Windows 宿主机
+### 2.2 Linux 宿主机（推荐）
 
+- 已安装并可用的 NVIDIA 驱动（`nvidia-smi` 可正常返回）
+- 已安装 NVIDIA Container Toolkit
+- Docker 可以正常启动 GPU 容器
+
+### 2.3 Windows 宿主机
+- 如果你是windows的电脑，直接使用windows平台的LM studio更好，除非有特殊需求。
 - Windows 10/11
 - Docker Desktop 使用 WSL2 后端
 - 宿主机安装最新 NVIDIA 驱动
@@ -42,12 +48,6 @@
 - 宿主机检查命令：
   - Windows 终端执行 `nvidia-smi` 可以正常返回
   - WSL 内执行 `wsl -d <你的发行版> nvidia-smi` 可以正常返回
-
-### 2.3 Linux 宿主机（推荐）
-
-- 已安装并可用的 NVIDIA 驱动（`nvidia-smi` 可正常返回）
-- 已安装 NVIDIA Container Toolkit
-- Docker 可以正常启动 GPU 容器
 
 ### 2.4 CUDA / GPU 运行时完备性检查
 
