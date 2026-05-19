@@ -1,0 +1,5 @@
+services:
+  lmstudio:
+    build: .
+    image: vuyoyo/lmstudio-guacamole:latest
+    pull_policy: never

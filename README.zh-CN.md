@@ -83,10 +83,23 @@
 
 ## 4. 启动
 
+本项目提供两种 Compose 模式：
+
+- 发布版（默认）：`docker-compose.yml`，使用镜像 `vuyoyo/lmstudio-guacamole:latest`
+- 本地版：`docker-compose.local.yml`，在默认配置基础上覆盖为本地源码构建
+
 在项目根目录执行：
 
+发布版（默认）：
+
 ```bash
-docker compose up -d --build
+docker compose up -d
+```
+
+本地版（使用本地源码构建）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
 访问地址：
@@ -102,11 +115,17 @@ docker compose up -d --build
 ## 5. 停止 / 重启 / 日志
 
 ```bash
-# 停止
+# 停止（发布版）
 docker compose down
 
-# 重建并重启
-docker compose up -d --build --force-recreate
+# 停止（本地版）
+docker compose -f docker-compose.yml -f docker-compose.local.yml down
+
+# 重启（发布版）
+docker compose up -d --force-recreate
+
+# 重建并重启（本地版）
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build --force-recreate
 
 # 查看日志
 docker compose logs -f

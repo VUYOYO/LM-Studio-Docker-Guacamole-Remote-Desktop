@@ -1,7 +1,6 @@
 services:
   lmstudio:
-    build: .
-    image: lmstudio-xfce:latest
+    image: vuyoyo/lmstudio-guacamole:latest
     container_name: lmstudio
     runtime: nvidia
     gpus: all
