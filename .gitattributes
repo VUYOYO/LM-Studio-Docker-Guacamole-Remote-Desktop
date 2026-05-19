@@ -1,0 +1,11 @@
+# Enforce LF for files executed inside Linux containers.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.env text eol=lf
+
+# Keep Windows scripts as CRLF if added in the future.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
