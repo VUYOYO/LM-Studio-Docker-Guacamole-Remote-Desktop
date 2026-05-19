@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     wget \
     curl \
+    python3 \
     ca-certificates \
     gnupg \
     locales \
@@ -28,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
     x11-utils \
+    autocutsel \
+    xclip \
+    xdotool \
     git \
     dbus-x11 \
     dbus-user-session \
@@ -96,11 +100,15 @@ RUN locale-gen en_US.UTF-8 zh_CN.UTF-8 && \
     fc-cache -f
 
 # 6. 准备持久化目录与桌面快捷方式
-RUN mkdir -p /app/lm-studio /root/.cache/lm-studio/models /root/Desktop && \
+RUN mkdir -p /app/lm-studio /app/cert /root/.cache/lm-studio/models /root/Desktop && \
     if [ -f /usr/share/applications/google-chrome.desktop ]; then cp /usr/share/applications/google-chrome.desktop /root/Desktop/; fi
+
+# 在最小容器中兼容的 Xfce 会话助手。
+RUN printf '#!/bin/sh\nexit 1\n' > /usr/bin/pm-is-supported && chmod +x /usr/bin/pm-is-supported
 
 WORKDIR /app
 COPY entrypoint.sh /app/entrypoint.sh
+COPY clipboard_bridge_server.py /app/clipboard_bridge_server.py
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 5900 1234

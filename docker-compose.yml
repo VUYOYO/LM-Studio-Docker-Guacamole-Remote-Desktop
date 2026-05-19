@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   lmstudio:
     build: .
@@ -49,6 +47,18 @@ services:
       - DESKTOP_SYNC_INTERVAL=${DESKTOP_SYNC_INTERVAL:-20}
       - LM_ENSURE_RUNNING=${LM_ENSURE_RUNNING:-true}
       - LM_RESTART_INTERVAL=${LM_RESTART_INTERVAL:-2}
+      - LM_ENSURE_WINDOW=${LM_ENSURE_WINDOW:-false}
+      - LM_WINDOW_MISSING_TICKS=${LM_WINDOW_MISSING_TICKS:-3}
+      - LM_WINDOW_GRACE_SECONDS=${LM_WINDOW_GRACE_SECONDS:-20}
+      - LM_WATCHDOG_DEBUG=${LM_WATCHDOG_DEBUG:-false} #For debug only
+      - ENABLE_CLIPBOARD_SYNC=${ENABLE_CLIPBOARD_SYNC:-true} #For debug only
+      - CLIPBOARD_AUTOCUTSEL_ENABLE=${CLIPBOARD_AUTOCUTSEL_ENABLE:-false} #For debug only
+      - CLIPBOARD_GUARDIAN_ENABLE=${CLIPBOARD_GUARDIAN_ENABLE:-false} #For debug only
+      - CLIPBOARD_GUARDIAN_INTERVAL=${CLIPBOARD_GUARDIAN_INTERVAL:-1} #For debug only
+      - CLIPBOARD_FAKE_KEYBOARD_ENABLE=${CLIPBOARD_FAKE_KEYBOARD_ENABLE:-false}
+      - CLIPBOARD_MAX_TYPE_CHARS=${CLIPBOARD_MAX_TYPE_CHARS:-8192}
+      - CLIPBOARD_BRIDGE_ENABLE=${CLIPBOARD_BRIDGE_ENABLE:-true}
+      - CLIPBOARD_BRIDGE_PORT=${CLIPBOARD_BRIDGE_PORT:-18080}
       - DESKTOP_LANGUAGE=${DESKTOP_LANGUAGE:-ENG}
       - XVFB_MAX_RESOLUTION=${XVFB_MAX_RESOLUTION:-4096x2160}
       - DISPLAY_NUM=${DISPLAY_NUM:-99}
@@ -59,8 +69,6 @@ services:
       - LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
       # - MODEL_PATH=/root/.cache/lm-studio/models/gemma-4-E4B-it-GGUF
       # - CONTEXT_LENGTH=32768
-    ports:
-      - "${LMS_API_PORT:-1234}:1234"
     volumes:
       - ./data:/app/lm-studio
       - ./cache:/root/.cache/lm-studio
@@ -75,8 +83,8 @@ services:
       test: ["CMD-SHELL", "bash -lc 'pgrep -x x11vnc >/dev/null'"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 25s
+      retries: 30
+      start_period: 120s
     restart: unless-stopped
 
   guacd:
@@ -111,8 +119,31 @@ services:
       - GUAC_DISABLE_COPY=${GUAC_DISABLE_COPY:-false}
       - GUAC_DISABLE_PASTE=${GUAC_DISABLE_PASTE:-false}
       - GUAC_CLIPBOARD_ENCODING=${GUAC_CLIPBOARD_ENCODING:-UTF-8}
-    ports:
-      - "${GUAC_WEB_PORT:-8888}:8080"
     volumes:
       - ./guacamole:/config/guacamole:ro
+    restart: unless-stopped
+
+  guacweb:
+    image: nginx:1.27-alpine
+    container_name: guacweb
+    depends_on:
+      guacamole:
+        condition: service_started
+      lmstudio:
+        condition: service_healthy
+    environment:
+      - GUAC_WEB_PORT=${GUAC_WEB_PORT:-8888}
+      - GUAC_WEB_HTTPS_ENABLE=${GUAC_WEB_HTTPS_ENABLE:-false}
+      - GUAC_WEB_HTTPS_VERIFY_CERT=${GUAC_WEB_HTTPS_VERIFY_CERT:-false}
+      - GUAC_WEB_CERT_FILE=${GUAC_WEB_CERT_FILE:-localhost.crt}
+      - GUAC_WEB_KEY_FILE=${GUAC_WEB_KEY_FILE:-localhost.key}
+      - CLIPBOARD_BRIDGE_PORT=${CLIPBOARD_BRIDGE_PORT:-18080}
+    ports:
+      - "${GUAC_WEB_PORT:-8888}:${GUAC_WEB_PORT:-8888}"
+      - "${LMS_API_PORT:-1234}:1234"
+    volumes:
+      - ./guac-proxy/50-setup-nginx.sh:/docker-entrypoint.d/50-setup-nginx.sh:ro
+      - ./guac-proxy/clipboard-bridge.js:/usr/share/nginx/html/clipboard-bridge.js:ro
+      - ./cert:/etc/nginx/certs
+    command: ["/bin/sh", "-c", "apk add --no-cache openssl >/dev/null 2>&1 || true; sh /docker-entrypoint.d/50-setup-nginx.sh && exec nginx -g 'daemon off;'"]
     restart: unless-stopped

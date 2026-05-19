@@ -44,6 +44,18 @@ LM_STUDIO_DOWNLOAD_TIMEOUT="${LM_STUDIO_DOWNLOAD_TIMEOUT:-30}"
 DESKTOP_SYNC_INTERVAL="${DESKTOP_SYNC_INTERVAL:-20}"
 LM_ENSURE_RUNNING="${LM_ENSURE_RUNNING:-true}"
 LM_RESTART_INTERVAL="${LM_RESTART_INTERVAL:-2}"
+LM_ENSURE_WINDOW="${LM_ENSURE_WINDOW:-false}"
+LM_WINDOW_MISSING_TICKS="${LM_WINDOW_MISSING_TICKS:-3}"
+LM_WINDOW_GRACE_SECONDS="${LM_WINDOW_GRACE_SECONDS:-20}"
+LM_WATCHDOG_DEBUG="${LM_WATCHDOG_DEBUG:-false}"
+ENABLE_CLIPBOARD_SYNC="${ENABLE_CLIPBOARD_SYNC:-true}"
+CLIPBOARD_GUARDIAN_ENABLE="${CLIPBOARD_GUARDIAN_ENABLE:-true}"
+CLIPBOARD_GUARDIAN_INTERVAL="${CLIPBOARD_GUARDIAN_INTERVAL:-1}"
+CLIPBOARD_FAKE_KEYBOARD_ENABLE="${CLIPBOARD_FAKE_KEYBOARD_ENABLE:-false}"
+CLIPBOARD_MAX_TYPE_CHARS="${CLIPBOARD_MAX_TYPE_CHARS:-8192}"
+CLIPBOARD_AUTOCUTSEL_ENABLE="${CLIPBOARD_AUTOCUTSEL_ENABLE:-false}"
+CLIPBOARD_BRIDGE_ENABLE="${CLIPBOARD_BRIDGE_ENABLE:-true}"
+CLIPBOARD_BRIDGE_PORT="${CLIPBOARD_BRIDGE_PORT:-18080}"
 DESKTOP_LANGUAGE="${DESKTOP_LANGUAGE:-ENG}"
 
 if ! echo "$SCREEN_RESOLUTION" | grep -Eq '^[0-9]+x[0-9]+$'; then
@@ -74,6 +86,14 @@ if ! echo "$LM_RESTART_INTERVAL" | grep -Eq '^[0-9]+$'; then
     echo ">>> Invalid LM_RESTART_INTERVAL=$LM_RESTART_INTERVAL, fallback to 2"
     LM_RESTART_INTERVAL="2"
 fi
+if ! echo "$LM_WINDOW_MISSING_TICKS" | grep -Eq '^[0-9]+$' || [ "$LM_WINDOW_MISSING_TICKS" -le 0 ]; then
+    echo ">>> Invalid LM_WINDOW_MISSING_TICKS=$LM_WINDOW_MISSING_TICKS, fallback to 3"
+    LM_WINDOW_MISSING_TICKS="3"
+fi
+if ! echo "$LM_WINDOW_GRACE_SECONDS" | grep -Eq '^[0-9]+$' || [ "$LM_WINDOW_GRACE_SECONDS" -lt 0 ]; then
+    echo ">>> Invalid LM_WINDOW_GRACE_SECONDS=$LM_WINDOW_GRACE_SECONDS, fallback to 20"
+    LM_WINDOW_GRACE_SECONDS="20"
+fi
 if ! echo "$LM_STUDIO_DOWNLOAD_RETRIES" | grep -Eq '^[0-9]+$'; then
     echo ">>> Invalid LM_STUDIO_DOWNLOAD_RETRIES=$LM_STUDIO_DOWNLOAD_RETRIES, fallback to 3"
     LM_STUDIO_DOWNLOAD_RETRIES="3"
@@ -81,6 +101,18 @@ fi
 if ! echo "$LM_STUDIO_DOWNLOAD_TIMEOUT" | grep -Eq '^[0-9]+$'; then
     echo ">>> Invalid LM_STUDIO_DOWNLOAD_TIMEOUT=$LM_STUDIO_DOWNLOAD_TIMEOUT, fallback to 30"
     LM_STUDIO_DOWNLOAD_TIMEOUT="30"
+fi
+if ! echo "$CLIPBOARD_GUARDIAN_INTERVAL" | grep -Eq '^[0-9]+([.][0-9]+)?$'; then
+    echo ">>> Invalid CLIPBOARD_GUARDIAN_INTERVAL=$CLIPBOARD_GUARDIAN_INTERVAL, fallback to 1"
+    CLIPBOARD_GUARDIAN_INTERVAL="1"
+fi
+if ! echo "$CLIPBOARD_MAX_TYPE_CHARS" | grep -Eq '^[0-9]+$' || [ "$CLIPBOARD_MAX_TYPE_CHARS" -le 0 ]; then
+    echo ">>> Invalid CLIPBOARD_MAX_TYPE_CHARS=$CLIPBOARD_MAX_TYPE_CHARS, fallback to 8192"
+    CLIPBOARD_MAX_TYPE_CHARS="8192"
+fi
+if ! echo "$CLIPBOARD_BRIDGE_PORT" | grep -Eq '^[0-9]+$' || [ "$CLIPBOARD_BRIDGE_PORT" -le 0 ] || [ "$CLIPBOARD_BRIDGE_PORT" -gt 65535 ]; then
+    echo ">>> Invalid CLIPBOARD_BRIDGE_PORT=$CLIPBOARD_BRIDGE_PORT, fallback to 18080"
+    CLIPBOARD_BRIDGE_PORT="18080"
 fi
 if ! echo "$LMS_BACKEND_SELECT_RETRIES" | grep -Eq '^[0-9]+$' || [ "$LMS_BACKEND_SELECT_RETRIES" -le 0 ]; then
     echo ">>> Invalid LMS_BACKEND_SELECT_RETRIES=$LMS_BACKEND_SELECT_RETRIES, fallback to 1"
@@ -597,8 +629,107 @@ fi
 sleep 5
 
 set_default_browser_to_chrome
+echo ">>> Startup stage: clipboard channel initialization..."
 
-echo ">>> Starting Fcitx5..."
+start_clipboard_sync() {
+    [ "$ENABLE_CLIPBOARD_SYNC" != "true" ] && return 0
+
+    if [ "$CLIPBOARD_AUTOCUTSEL_ENABLE" != "true" ]; then
+        echo ">>> Clipboard autocutsel bridge disabled (CLIPBOARD_AUTOCUTSEL_ENABLE=false)."
+        return 0
+    fi
+
+    if command -v autocutsel >/dev/null 2>&1; then
+        pgrep -f 'autocutsel( |$)' >/dev/null 2>&1 || (DISPLAY="$DISPLAY" autocutsel >/tmp/autocutsel-primary.log 2>&1 &)
+        pgrep -f 'autocutsel -selection CLIPBOARD' >/dev/null 2>&1 || (DISPLAY="$DISPLAY" autocutsel -selection CLIPBOARD >/tmp/autocutsel-clipboard.log 2>&1 &)
+        echo ">>> Clipboard sync enabled via autocutsel."
+    else
+        echo ">>> autocutsel not found, clipboard sync bridge skipped."
+    fi
+}
+
+start_clipboard_guardian() {
+    [ "$ENABLE_CLIPBOARD_SYNC" != "true" ] && return 0
+    [ "$CLIPBOARD_GUARDIAN_ENABLE" != "true" ] && return 0
+
+    if ! command -v xclip >/dev/null 2>&1; then
+        echo ">>> xclip not found, clipboard guardian skipped."
+        return 0
+    fi
+
+    (
+        local last_clipboard=""
+        local last_primary=""
+        local clipboard_text=""
+        local primary_text=""
+
+        while true; do
+
+            clipboard_text="$(xclip -selection clipboard -o 2>/dev/null || true)"
+            primary_text="$(xclip -selection primary -o 2>/dev/null || true)"
+
+            if [ "$clipboard_text" != "$last_clipboard" ]; then
+                if [ -n "$clipboard_text" ] && [ "$primary_text" != "$clipboard_text" ]; then
+                    printf '%s' "$clipboard_text" | xclip -selection primary -i >/dev/null 2>&1 || true
+                fi
+
+                if [ "$CLIPBOARD_FAKE_KEYBOARD_ENABLE" = "true" ] && [ -n "$clipboard_text" ] && command -v xdotool >/dev/null 2>&1; then
+                    if [ "${#clipboard_text}" -le "$CLIPBOARD_MAX_TYPE_CHARS" ]; then
+                        printf '%s' "$clipboard_text" | xdotool type --clearmodifiers --file - >/dev/null 2>&1 || true
+                    else
+                        echo ">>> Clipboard fake keyboard skipped because text length exceeds CLIPBOARD_MAX_TYPE_CHARS=$CLIPBOARD_MAX_TYPE_CHARS"
+                    fi
+                fi
+
+                last_clipboard="$clipboard_text"
+            fi
+
+            if [ "$primary_text" != "$last_primary" ]; then
+                if [ -n "$primary_text" ] && [ "$clipboard_text" != "$primary_text" ]; then
+                    printf '%s' "$primary_text" | xclip -selection clipboard -i >/dev/null 2>&1 || true
+                fi
+                last_primary="$primary_text"
+            fi
+
+            sleep "$CLIPBOARD_GUARDIAN_INTERVAL"
+        done
+    ) >/tmp/clipboard-guardian.log 2>&1 &
+
+    echo ">>> Clipboard guardian enabled (interval=${CLIPBOARD_GUARDIAN_INTERVAL}s, fake-keyboard=${CLIPBOARD_FAKE_KEYBOARD_ENABLE})."
+}
+
+start_http_clipboard_bridge() {
+    [ "$ENABLE_CLIPBOARD_SYNC" != "true" ] && return 0
+    [ "$CLIPBOARD_BRIDGE_ENABLE" != "true" ] && return 0
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo ">>> python3 not found, HTTP clipboard bridge skipped."
+        return 0
+    fi
+    if ! command -v xclip >/dev/null 2>&1; then
+        echo ">>> xclip not found, HTTP clipboard bridge skipped."
+        return 0
+    fi
+    if [ ! -f /app/clipboard_bridge_server.py ]; then
+        echo ">>> /app/clipboard_bridge_server.py not found, HTTP clipboard bridge skipped."
+        return 0
+    fi
+
+    DISPLAY="$DISPLAY" python3 /app/clipboard_bridge_server.py \
+        --bind "0.0.0.0" \
+        --port "$CLIPBOARD_BRIDGE_PORT" \
+        --max-chars "$CLIPBOARD_MAX_TYPE_CHARS" \
+        --poll-interval 0.8 \
+        >>/proc/1/fd/1 2>>/proc/1/fd/2 &
+
+    echo ">>> HTTP clipboard bridge enabled on 0.0.0.0:${CLIPBOARD_BRIDGE_PORT}."
+}
+
+start_clipboard_sync
+start_clipboard_guardian
+start_http_clipboard_bridge
+
+echo ">>> Startup stage: input method initialization..."
 fcitx5 -d || true
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
@@ -638,16 +769,144 @@ launch_lmstudio() {
     fi
 }
 
+ensure_vnc_password_file() {
+    mkdir -p /root/.vnc
+
+    if [ -s /root/.vnc/passwd ]; then
+        return 0
+    fi
+
+    x11vnc -storepasswd "$GUAC_TARGET_PASSWORD" /root/.vnc/passwd >/tmp/x11vnc-storepasswd.log 2>&1
+}
+
+probe_lmstudio_api_ready() {
+    (
+        local deadline=$((SECONDS + 180))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+            if curl -fsS --max-time 2 "http://127.0.0.1:1234/v1/models" >/dev/null 2>&1; then
+                echo ">>> LM Studio API is ready on 127.0.0.1:1234."
+                return 0
+            fi
+            sleep 2
+        done
+        echo ">>> LM Studio API did not become ready within 180s. Check /tmp/lmstudio-restart.log and watchdog settings."
+    ) &
+}
+
+lmstudio_process_match='(/app/lm-studio/squashfs-root/lm-studio|/app/lm-studio/squashfs-root/AppRun|/app/lm-studio/LM-Studio.AppImage)'
+lmstudio_main_process_match='(/app/lm-studio/squashfs-root/lm-studio|/app/lm-studio/squashfs-root/AppRun|/app/lm-studio/LM-Studio.AppImage).*--server --host 0.0.0.0 --port 1234'
+
+lmstudio_is_running() {
+    pgrep -f "$lmstudio_main_process_match" >/dev/null 2>&1
+}
+
+lmstudio_stop_all() {
+    pkill -f "$lmstudio_main_process_match" >/dev/null 2>&1 || true
+    pkill -f "$lmstudio_process_match" >/dev/null 2>&1 || true
+}
+
+lmstudio_window_present() {
+    local ids=""
+    local id=""
+    local pid=""
+    local cmdline=""
+    local candidate="false"
+    local wm_state=""
+
+    if command -v xprop >/dev/null 2>&1; then
+        ids="$(xprop -root _NET_CLIENT_LIST 2>/dev/null | sed -n 's/^.*# //p' | tr ',' ' ')"
+        for id in $ids; do
+            candidate="false"
+            if xprop -id "$id" WM_CLASS 2>/dev/null | grep -Eqi 'lm-studio|lmstudio'; then
+                candidate="true"
+            fi
+
+            if [ "$candidate" != "true" ]; then
+                pid="$(xprop -id "$id" _NET_WM_PID 2>/dev/null | awk '{print $3}')"
+                if [ -n "$pid" ]; then
+                    cmdline="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+                    if echo "$cmdline" | grep -Eq "$lmstudio_process_match"; then
+                        candidate="true"
+                    fi
+                fi
+            fi
+
+            if [ "$candidate" != "true" ]; then
+                continue
+            fi
+
+            wm_state="$(xprop -id "$id" _NET_WM_STATE 2>/dev/null || true)"
+            if echo "$wm_state" | grep -Eq '_NET_WM_STATE_HIDDEN'; then
+                continue
+            fi
+            if command -v xwininfo >/dev/null 2>&1; then
+                if ! xwininfo -id "$id" 2>/dev/null | grep -q 'Map State: IsViewable'; then
+                    continue
+                fi
+            fi
+            return 0
+        done
+        return 1
+    fi
+
+    if ! command -v xwininfo >/dev/null 2>&1; then
+        return 0
+    fi
+    xwininfo -root -tree 2>/dev/null | grep -Eqi '"(LM Studio|LM-Studio)"'
+}
+
 if [ -x "$LM_EXEC" ]; then
+    echo ">>> Startup stage: launching LM Studio process..."
     launch_lmstudio &
     echo ">>> LM Studio started with pid: $!"
+    probe_lmstudio_api_ready
 
     if [ "$LM_ENSURE_RUNNING" = "true" ]; then
         (
+            window_missing_ticks=0
+            last_launch_epoch="$(date +%s)"
+            watchdog_tick=0
             while true; do
-                if ! pgrep -f '(/app/lm-studio/squashfs-root/lm-studio|/app/lm-studio/squashfs-root/AppRun|/app/lm-studio/LM-Studio.AppImage)' >/dev/null 2>&1; then
+                watchdog_tick=$((watchdog_tick + 1))
+                if ! lmstudio_is_running; then
                     echo ">>> LM Studio exited, restarting..."
+                    lmstudio_stop_all
                     launch_lmstudio >/tmp/lmstudio-restart.log 2>&1 &
+                    last_launch_epoch="$(date +%s)"
+                    window_missing_ticks=0
+                elif [ "$LM_ENSURE_WINDOW" = "true" ]; then
+                    now_epoch="$(date +%s)"
+                    if [ $((now_epoch - last_launch_epoch)) -ge "$LM_WINDOW_GRACE_SECONDS" ]; then
+                        if lmstudio_window_present; then
+                            window_missing_ticks=0
+                        else
+                            window_missing_ticks=$((window_missing_ticks + 1))
+                            if [ "$window_missing_ticks" -ge "$LM_WINDOW_MISSING_TICKS" ]; then
+                                echo ">>> LM Studio window is missing, restarting..."
+                                lmstudio_stop_all
+                                launch_lmstudio >/tmp/lmstudio-restart.log 2>&1 &
+                                last_launch_epoch="$(date +%s)"
+                                window_missing_ticks=0
+                            fi
+                        fi
+                    fi
+                fi
+                if [ "$LM_WATCHDOG_DEBUG" = "true" ]; then
+                    if lmstudio_is_running; then
+                        running_state="up"
+                    else
+                        running_state="down"
+                    fi
+                    if [ "$LM_ENSURE_WINDOW" = "true" ]; then
+                        if lmstudio_window_present; then
+                            window_state="present"
+                        else
+                            window_state="missing"
+                        fi
+                    else
+                        window_state="disabled"
+                    fi
+                    echo ">>> watchdog tick=$watchdog_tick running=$running_state window=$window_state missing_ticks=$window_missing_ticks"
                 fi
                 sleep "$LM_RESTART_INTERVAL"
             done
@@ -794,6 +1053,7 @@ start_x11vnc_server() {
         -shared
         -rfbauth /root/.vnc/passwd
         -listen "0.0.0.0"
+        -input KMBC
         -xkb
         -noxdamage
         -repeat
@@ -866,9 +1126,11 @@ monitor_resolution_policy() {
 }
 
 if [ "$ENABLE_GUAC_WEB" = "true" ]; then
+    echo ">>> Startup stage: launching x11vnc..."
     echo ">>> Starting shared x11vnc server on :${DISPLAY_NUM}..."
-    mkdir -p /root/.vnc
-    x11vnc -storepasswd "$GUAC_TARGET_PASSWORD" /root/.vnc/passwd
+    if ! ensure_vnc_password_file; then
+        echo ">>> Failed to initialize /root/.vnc/passwd, x11vnc may fail. Check /tmp/x11vnc-storepasswd.log"
+    fi
     start_x11vnc_server
     sleep 2
 

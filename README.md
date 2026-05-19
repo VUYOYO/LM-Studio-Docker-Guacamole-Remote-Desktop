@@ -19,6 +19,7 @@ Additional features of the project:
 
 - The XFCE desktop provides a Chrome browser for viewing documents.
 - Within the XFCE desktop, if LM Studio is closed, it will automatically restart.
+- An HTTP standalone clipboard using UTF-8 encoding, supporting various characters including Chinese. (HTTPS required)
 
 
 ## 2. Host Requirements
@@ -191,4 +192,6 @@ This project is currently optimized for NVIDIA runtime. If you want to run infer
 ### 8.3 Important disclaimer
 
 - Due to hardware limitations, I have not validated AMD GPU or Intel GPU inference in this project.
+- If you require AMD/Intel production usage, you need to explore, adapt, and validate the stack on your own hardware.
+ons, I have not validated AMD GPU or Intel GPU inference in this project.
 - If you require AMD/Intel production usage, you need to explore, adapt, and validate the stack on your own hardware.
