@@ -59,6 +59,12 @@ CUDA readiness on host is required for NVIDIA path.
 - Optional toolkit check on host:
 	- `nvcc --version` (optional for this project; not required if runtime path works)
 
+### 2.5 Known Issues
+
+- Based on my testing, the NVIDIA 570 driver may cause LM Studio's runtime to incorrectly display as incompatible with CUDA and Vulkan, but this does not affect actual inference capabilities.
+
+- Based on my testing, I currently recommend upgrading to the 580 driver, as the runtime displays correctly with the 580 driver.
+
 ## 3. Configuration (.env)
 
 Edit [.env](.env) before first run.
