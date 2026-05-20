@@ -74,6 +74,8 @@ Important fields:
 
 - `GUAC_WEB_PORT`: Guacamole web port on host, default `8888`
 - `LMS_API_PORT`: LM Studio API port on host, default `1234`
+- `GUAC_WEB_HTTPS_ENABLE`: HTTPS toggle for Guacamole web port
+- `LMS_API_HTTPS_ENABLE`: HTTPS toggle for LM Studio API port
 - `GUAC_USERNAME` / `GUAC_PASSWORD`: Guacamole login account
 - `GUAC_TARGET_PASSWORD`: VNC password used between Guacamole and desktop service
 
@@ -106,8 +108,8 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
 Access URLs:
 
-- Guacamole Web: `http://<host-ip>:<GUAC_WEB_PORT>`
-- LM Studio API: `http://<host-ip>:<LMS_API_PORT>`
+- Guacamole Web: `http://` or `https://<host-ip>:<GUAC_WEB_PORT>` (controlled by `GUAC_WEB_HTTPS_ENABLE`)
+- LM Studio API: `http://` or `https://<host-ip>:<LMS_API_PORT>` (controlled by `LMS_API_HTTPS_ENABLE`)
 
 Default example:
 

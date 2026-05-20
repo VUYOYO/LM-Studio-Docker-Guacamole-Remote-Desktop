@@ -72,6 +72,8 @@
 
 - `GUAC_WEB_PORT`：Guacamole Web 宿主机端口，默认 `8888`
 - `LMS_API_PORT`：LM Studio API 宿主机端口，默认 `1234`
+- `GUAC_WEB_HTTPS_ENABLE`：Guacamole Web 端口 HTTPS 开关
+- `LMS_API_HTTPS_ENABLE`：LM Studio API 端口 HTTPS 开关
 - `GUAC_USERNAME` / `GUAC_PASSWORD`：Guacamole 登录账号
 - `GUAC_TARGET_PASSWORD`：Guacamole 到桌面 VNC 服务使用的密码
 
@@ -104,8 +106,8 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
 访问地址：
 
-- Guacamole Web：`http://<宿主机IP>:<GUAC_WEB_PORT>`
-- LM Studio API：`http://<宿主机IP>:<LMS_API_PORT>`
+- Guacamole Web：`http://` 或 `https://<宿主机IP>:<GUAC_WEB_PORT>`（由 `GUAC_WEB_HTTPS_ENABLE` 控制）
+- LM Studio API：`http://` 或 `https://<宿主机IP>:<LMS_API_PORT>`（由 `LMS_API_HTTPS_ENABLE` 控制）
 
 默认示例：
 

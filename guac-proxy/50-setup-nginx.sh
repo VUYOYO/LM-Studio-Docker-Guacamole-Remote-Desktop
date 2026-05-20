@@ -103,7 +103,8 @@ generate_self_signed_cert() {
     fi
 }
 
-HTTPS_ENABLE="$(to_bool "${GUAC_WEB_HTTPS_ENABLE:-false}")"
+WEB_HTTPS_ENABLE="$(to_bool "${GUAC_WEB_HTTPS_ENABLE:-false}")"
+API_HTTPS_ENABLE="$(to_bool "${LMS_API_HTTPS_ENABLE:-false}")"
 VERIFY_CERT="$(to_bool "${GUAC_WEB_HTTPS_VERIFY_CERT:-false}")"
 CERT_DIR="/etc/nginx/certs"
 CERT_NAME="${GUAC_WEB_CERT_FILE:-localhost.crt}"
@@ -113,10 +114,13 @@ KEY_PATH="${CERT_DIR}/${KEY_NAME}"
 BRIDGE_PORT="${CLIPBOARD_BRIDGE_PORT:-18080}"
 WEB_PORT="${GUAC_WEB_PORT:-8888}"
 
-SSL_LISTEN_SUFFIX=""
-SSL_BLOCK=""
+WEB_SSL_LISTEN_SUFFIX=""
+WEB_SSL_BLOCK=""
+API_SSL_LISTEN_SUFFIX=""
+API_SSL_BLOCK=""
+COMMON_SSL_BLOCK=""
 
-if [ "$HTTPS_ENABLE" = "true" ]; then
+if [ "$WEB_HTTPS_ENABLE" = "true" ] || [ "$API_HTTPS_ENABLE" = "true" ]; then
     mkdir -p "$CERT_DIR"
 
     if [ "$VERIFY_CERT" = "true" ]; then
@@ -130,16 +134,27 @@ if [ "$HTTPS_ENABLE" = "true" ]; then
         fi
     fi
 
-    SSL_LISTEN_SUFFIX=" ssl"
-    SSL_BLOCK="
+    COMMON_SSL_BLOCK="
     ssl_certificate ${CERT_PATH};
     ssl_certificate_key ${KEY_PATH};
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;"
+fi
+
+if [ "$WEB_HTTPS_ENABLE" = "true" ]; then
+    WEB_SSL_LISTEN_SUFFIX=" ssl"
+    WEB_SSL_BLOCK="$COMMON_SSL_BLOCK"
 else
-    log "HTTPS disabled, serving HTTP"
+    log "Guacamole web HTTPS disabled, serving HTTP on ${WEB_PORT}"
+fi
+
+if [ "$API_HTTPS_ENABLE" = "true" ]; then
+    API_SSL_LISTEN_SUFFIX=" ssl"
+    API_SSL_BLOCK="$COMMON_SSL_BLOCK"
+else
+    log "LM Studio API HTTPS disabled, serving HTTP on 1234"
 fi
 
 cat > /etc/nginx/conf.d/default.conf <<EOF
@@ -149,8 +164,8 @@ map \$http_upgrade \$connection_upgrade {
 }
 
 server {
-    listen ${WEB_PORT}${SSL_LISTEN_SUFFIX};
-    server_name _;${SSL_BLOCK}
+    listen ${WEB_PORT}${WEB_SSL_LISTEN_SUFFIX};
+    server_name _;${WEB_SSL_BLOCK}
 
     client_max_body_size 2m;
 
@@ -198,8 +213,8 @@ server {
 }
 
 server {
-    listen 1234${SSL_LISTEN_SUFFIX};
-    server_name _;${SSL_BLOCK}
+    listen 1234${API_SSL_LISTEN_SUFFIX};
+    server_name _;${API_SSL_BLOCK}
 
     location / {
         proxy_pass http://lmstudio:1234;
@@ -220,4 +235,4 @@ nginx -t >/dev/null 2>&1 || {
     exit 1
 }
 
-log "nginx runtime config generated (https=${HTTPS_ENABLE}, cert=${CERT_PATH}, key=${KEY_PATH})"
+log "nginx runtime config generated (web_https=${WEB_HTTPS_ENABLE}, api_https=${API_HTTPS_ENABLE}, cert=${CERT_PATH}, key=${KEY_PATH})"

@@ -133,6 +133,7 @@ services:
     environment:
       - GUAC_WEB_PORT=${GUAC_WEB_PORT:-8888}
       - GUAC_WEB_HTTPS_ENABLE=${GUAC_WEB_HTTPS_ENABLE:-false}
+      - LMS_API_HTTPS_ENABLE=${LMS_API_HTTPS_ENABLE:-false}
       - GUAC_WEB_HTTPS_VERIFY_CERT=${GUAC_WEB_HTTPS_VERIFY_CERT:-false}
       - GUAC_WEB_CERT_FILE=${GUAC_WEB_CERT_FILE:-localhost.crt}
       - GUAC_WEB_KEY_FILE=${GUAC_WEB_KEY_FILE:-localhost.key}
