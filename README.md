@@ -76,6 +76,8 @@ Important fields:
 - `LMS_API_PORT`: LM Studio API port on host, default `1234`
 - `GUAC_WEB_HTTPS_ENABLE`: HTTPS toggle for Guacamole web port
 - `LMS_API_HTTPS_ENABLE`: HTTPS toggle for LM Studio API port
+- `GUAC_WEB_HTTPS_VERIFY_CERT` / `GUAC_WEB_CERT_FILE` / `GUAC_WEB_KEY_FILE`: cert policy and files for Guacamole web HTTPS
+- `LMS_API_HTTPS_VERIFY_CERT` / `LMS_API_CERT_FILE` / `LMS_API_KEY_FILE`: cert policy and files for LM Studio API HTTPS
 - `GUAC_USERNAME` / `GUAC_PASSWORD`: Guacamole login account
 - `GUAC_TARGET_PASSWORD`: VNC password used between Guacamole and desktop service
 

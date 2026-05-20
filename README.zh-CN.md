@@ -74,6 +74,8 @@
 - `LMS_API_PORT`：LM Studio API 宿主机端口，默认 `1234`
 - `GUAC_WEB_HTTPS_ENABLE`：Guacamole Web 端口 HTTPS 开关
 - `LMS_API_HTTPS_ENABLE`：LM Studio API 端口 HTTPS 开关
+- `GUAC_WEB_HTTPS_VERIFY_CERT` / `GUAC_WEB_CERT_FILE` / `GUAC_WEB_KEY_FILE`：Guacamole Web HTTPS 的证书校验策略与证书文件
+- `LMS_API_HTTPS_VERIFY_CERT` / `LMS_API_CERT_FILE` / `LMS_API_KEY_FILE`：LM Studio API HTTPS 的证书校验策略与证书文件
 - `GUAC_USERNAME` / `GUAC_PASSWORD`：Guacamole 登录账号
 - `GUAC_TARGET_PASSWORD`：Guacamole 到桌面 VNC 服务使用的密码
 

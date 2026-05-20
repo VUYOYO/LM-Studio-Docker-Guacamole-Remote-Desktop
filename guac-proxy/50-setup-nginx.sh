@@ -37,6 +37,9 @@ ensure_openssl() {
 }
 
 validate_cert_files() {
+    CERT_PATH="$1"
+    KEY_PATH="$2"
+
     [ -s "$CERT_PATH" ] || {
         log "certificate file missing: $CERT_PATH"
         return 1
@@ -73,6 +76,9 @@ validate_cert_files() {
 }
 
 generate_self_signed_cert() {
+    CERT_PATH="$1"
+    KEY_PATH="$2"
+
     ensure_openssl || {
         log "openssl unavailable, cannot generate self-signed certificate"
         return 1
@@ -105,12 +111,17 @@ generate_self_signed_cert() {
 
 WEB_HTTPS_ENABLE="$(to_bool "${GUAC_WEB_HTTPS_ENABLE:-false}")"
 API_HTTPS_ENABLE="$(to_bool "${LMS_API_HTTPS_ENABLE:-false}")"
-VERIFY_CERT="$(to_bool "${GUAC_WEB_HTTPS_VERIFY_CERT:-false}")"
+WEB_VERIFY_CERT="$(to_bool "${GUAC_WEB_HTTPS_VERIFY_CERT:-false}")"
+API_VERIFY_CERT="$(to_bool "${LMS_API_HTTPS_VERIFY_CERT:-${GUAC_WEB_HTTPS_VERIFY_CERT:-false}}")"
 CERT_DIR="/etc/nginx/certs"
-CERT_NAME="${GUAC_WEB_CERT_FILE:-localhost.crt}"
-KEY_NAME="${GUAC_WEB_KEY_FILE:-localhost.key}"
-CERT_PATH="${CERT_DIR}/${CERT_NAME}"
-KEY_PATH="${CERT_DIR}/${KEY_NAME}"
+WEB_CERT_NAME="${GUAC_WEB_CERT_FILE:-localhost.crt}"
+WEB_KEY_NAME="${GUAC_WEB_KEY_FILE:-localhost.key}"
+API_CERT_NAME="${LMS_API_CERT_FILE:-${GUAC_WEB_CERT_FILE:-localhost.crt}}"
+API_KEY_NAME="${LMS_API_KEY_FILE:-${GUAC_WEB_KEY_FILE:-localhost.key}}"
+WEB_CERT_PATH="${CERT_DIR}/${WEB_CERT_NAME}"
+WEB_KEY_PATH="${CERT_DIR}/${WEB_KEY_NAME}"
+API_CERT_PATH="${CERT_DIR}/${API_CERT_NAME}"
+API_KEY_PATH="${CERT_DIR}/${API_KEY_NAME}"
 BRIDGE_PORT="${CLIPBOARD_BRIDGE_PORT:-18080}"
 WEB_PORT="${GUAC_WEB_PORT:-8888}"
 
@@ -118,41 +129,55 @@ WEB_SSL_LISTEN_SUFFIX=""
 WEB_SSL_BLOCK=""
 API_SSL_LISTEN_SUFFIX=""
 API_SSL_BLOCK=""
-COMMON_SSL_BLOCK=""
 
 if [ "$WEB_HTTPS_ENABLE" = "true" ] || [ "$API_HTTPS_ENABLE" = "true" ]; then
     mkdir -p "$CERT_DIR"
+fi
 
-    if [ "$VERIFY_CERT" = "true" ]; then
-        log "HTTPS enabled with strict certificate validation"
-        validate_cert_files || exit 1
+if [ "$WEB_HTTPS_ENABLE" = "true" ]; then
+    if [ "$WEB_VERIFY_CERT" = "true" ]; then
+        log "Guacamole web HTTPS enabled with strict certificate validation"
+        validate_cert_files "$WEB_CERT_PATH" "$WEB_KEY_PATH" || exit 1
     else
-        log "HTTPS enabled without strict certificate validation"
-        if ! validate_cert_files; then
-            generate_self_signed_cert
-            validate_cert_files || exit 1
+        log "Guacamole web HTTPS enabled without strict certificate validation"
+        if ! validate_cert_files "$WEB_CERT_PATH" "$WEB_KEY_PATH"; then
+            generate_self_signed_cert "$WEB_CERT_PATH" "$WEB_KEY_PATH"
+            validate_cert_files "$WEB_CERT_PATH" "$WEB_KEY_PATH" || exit 1
         fi
     fi
 
-    COMMON_SSL_BLOCK="
-    ssl_certificate ${CERT_PATH};
-    ssl_certificate_key ${KEY_PATH};
+    WEB_SSL_BLOCK="
+    ssl_certificate ${WEB_CERT_PATH};
+    ssl_certificate_key ${WEB_KEY_PATH};
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;"
-fi
-
-if [ "$WEB_HTTPS_ENABLE" = "true" ]; then
     WEB_SSL_LISTEN_SUFFIX=" ssl"
-    WEB_SSL_BLOCK="$COMMON_SSL_BLOCK"
 else
     log "Guacamole web HTTPS disabled, serving HTTP on ${WEB_PORT}"
 fi
 
 if [ "$API_HTTPS_ENABLE" = "true" ]; then
+    if [ "$API_VERIFY_CERT" = "true" ]; then
+        log "LM Studio API HTTPS enabled with strict certificate validation"
+        validate_cert_files "$API_CERT_PATH" "$API_KEY_PATH" || exit 1
+    else
+        log "LM Studio API HTTPS enabled without strict certificate validation"
+        if ! validate_cert_files "$API_CERT_PATH" "$API_KEY_PATH"; then
+            generate_self_signed_cert "$API_CERT_PATH" "$API_KEY_PATH"
+            validate_cert_files "$API_CERT_PATH" "$API_KEY_PATH" || exit 1
+        fi
+    fi
+
+    API_SSL_BLOCK="
+    ssl_certificate ${API_CERT_PATH};
+    ssl_certificate_key ${API_KEY_PATH};
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;"
     API_SSL_LISTEN_SUFFIX=" ssl"
-    API_SSL_BLOCK="$COMMON_SSL_BLOCK"
 else
     log "LM Studio API HTTPS disabled, serving HTTP on 1234"
 fi
@@ -235,4 +260,4 @@ nginx -t >/dev/null 2>&1 || {
     exit 1
 }
 
-log "nginx runtime config generated (web_https=${WEB_HTTPS_ENABLE}, api_https=${API_HTTPS_ENABLE}, cert=${CERT_PATH}, key=${KEY_PATH})"
+log "nginx runtime config generated (web_https=${WEB_HTTPS_ENABLE}, api_https=${API_HTTPS_ENABLE}, web_cert=${WEB_CERT_PATH}, api_cert=${API_CERT_PATH})"
