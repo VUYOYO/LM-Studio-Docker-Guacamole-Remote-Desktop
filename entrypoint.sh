@@ -28,6 +28,8 @@ XVFB_RESTART_INTERVAL="${XVFB_RESTART_INTERVAL:-2}"
 X11VNC_DISABLE_XFIXES="${X11VNC_DISABLE_XFIXES:-true}"
 X11VNC_ENSURE_RUNNING="${X11VNC_ENSURE_RUNNING:-true}"
 X11VNC_RESTART_INTERVAL="${X11VNC_RESTART_INTERVAL:-2}"
+XFCE_ENSURE_COMPONENTS="${XFCE_ENSURE_COMPONENTS:-true}"
+XFCE_COMPONENT_CHECK_INTERVAL="${XFCE_COMPONENT_CHECK_INTERVAL:-5}"
 GUAC_USERNAME="${GUAC_USERNAME:-lmstudio}"
 GUAC_PASSWORD="${GUAC_PASSWORD:-lmstudio}"
 GUAC_CONN_NAME="${GUAC_CONN_NAME:-LM Studio Shared Desktop}"
@@ -135,6 +137,10 @@ fi
 if ! echo "$X11VNC_RESTART_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$X11VNC_RESTART_INTERVAL" -le 0 ]; then
     echo ">>> Invalid X11VNC_RESTART_INTERVAL=$X11VNC_RESTART_INTERVAL, fallback to 2"
     X11VNC_RESTART_INTERVAL="2"
+fi
+if ! echo "$XFCE_COMPONENT_CHECK_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$XFCE_COMPONENT_CHECK_INTERVAL" -le 0 ]; then
+    echo ">>> Invalid XFCE_COMPONENT_CHECK_INTERVAL=$XFCE_COMPONENT_CHECK_INTERVAL, fallback to 5"
+    XFCE_COMPONENT_CHECK_INTERVAL="5"
 fi
 
 case "$(echo "$DESKTOP_LANGUAGE" | tr '[:lower:]' '[:upper:]')" in
@@ -622,10 +628,21 @@ fi
 
 echo ">>> Starting D-Bus..."
 mkdir -p /run/dbus
-dbus-daemon --system --fork
+if [ -f /run/dbus/pid ]; then
+    dbus_pid="$(cat /run/dbus/pid 2>/dev/null || true)"
+    if [ -z "$dbus_pid" ] || ! kill -0 "$dbus_pid" >/dev/null 2>&1; then
+        rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
+    fi
+fi
+if [ ! -S /run/dbus/system_bus_socket ]; then
+    dbus-daemon --system --fork --nopidfile >/tmp/dbus-system.log 2>&1 || true
+fi
 export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 if command -v dbus-launch >/dev/null 2>&1; then
     eval "$(dbus-launch --sh-syntax)"
+fi
+if [ ! -S /run/dbus/system_bus_socket ]; then
+    echo ">>> Warning: system D-Bus is unavailable; some desktop integrations may not work."
 fi
 
 x_display_ready() {
@@ -685,12 +702,53 @@ if [ "$SCREEN_RESOLUTION" != "$XVFB_MAX_RESOLUTION" ]; then
 fi
 
 echo ">>> Starting Xfce4 desktop..."
-if [ "$GPU_AVAILABLE" = "true" ]; then
-    startxfce4 &
-else
-    LIBGL_ALWAYS_SOFTWARE=1 GSK_RENDERER=cairo startxfce4 &
-fi
+start_xfce_desktop() {
+    if [ "$GPU_AVAILABLE" = "true" ]; then
+        startxfce4 >/tmp/startxfce4.log 2>&1 &
+    else
+        LIBGL_ALWAYS_SOFTWARE=1 GSK_RENDERER=cairo startxfce4 >/tmp/startxfce4.log 2>&1 &
+    fi
+}
+
+ensure_xfce_components_once() {
+    if ! pgrep -x xfwm4 >/dev/null 2>&1; then
+        echo ">>> xfwm4 is not running, starting..."
+        DISPLAY="$DISPLAY" xfwm4 --replace >/tmp/xfwm4.log 2>&1 &
+    fi
+
+    if ! pgrep -x xfdesktop >/dev/null 2>&1; then
+        echo ">>> xfdesktop is not running, starting..."
+        DISPLAY="$DISPLAY" xfdesktop --disable-wm-check >/tmp/xfdesktop.log 2>&1 &
+    fi
+
+    if ! pgrep -x xfce4-panel >/dev/null 2>&1; then
+        echo ">>> xfce4-panel is not running, starting..."
+        DISPLAY="$DISPLAY" xfce4-panel >/tmp/xfce4-panel.log 2>&1 &
+    fi
+
+    if command -v xfconf-query >/dev/null 2>&1; then
+        DISPLAY="$DISPLAY" xfconf-query -c xfce4-desktop -p /desktop-icons/style -n -t int -s 2 >/dev/null 2>&1 || \
+            DISPLAY="$DISPLAY" xfconf-query -c xfce4-desktop -p /desktop-icons/style -s 2 >/dev/null 2>&1 || true
+    fi
+}
+
+start_xfce_watchdog() {
+    [ "$XFCE_ENSURE_COMPONENTS" = "true" ] || return 0
+
+    (
+        while true; do
+            if x_display_ready; then
+                ensure_xfce_components_once
+            fi
+            sleep "$XFCE_COMPONENT_CHECK_INTERVAL"
+        done
+    ) &
+}
+
+start_xfce_desktop
 sleep 5
+ensure_xfce_components_once
+start_xfce_watchdog
 
 set_default_browser_to_chrome
 echo ">>> Startup stage: clipboard channel initialization..."
