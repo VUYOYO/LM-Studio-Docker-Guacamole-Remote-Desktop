@@ -22,6 +22,9 @@ ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION="${ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTI
 SINGLE_CLIENT_RESOLUTION_HINT="${SINGLE_CLIENT_RESOLUTION_HINT:-}"
 XVFB_MAX_RESOLUTION="${XVFB_MAX_RESOLUTION:-4096x2160}"
 VNC_REQUESTED_RESOLUTION_FILE="${VNC_REQUESTED_RESOLUTION_FILE:-/tmp/vnc-requested-resolution}"
+X11VNC_DISABLE_XFIXES="${X11VNC_DISABLE_XFIXES:-true}"
+X11VNC_ENSURE_RUNNING="${X11VNC_ENSURE_RUNNING:-true}"
+X11VNC_RESTART_INTERVAL="${X11VNC_RESTART_INTERVAL:-2}"
 GUAC_USERNAME="${GUAC_USERNAME:-lmstudio}"
 GUAC_PASSWORD="${GUAC_PASSWORD:-lmstudio}"
 GUAC_CONN_NAME="${GUAC_CONN_NAME:-LM Studio Shared Desktop}"
@@ -117,6 +120,10 @@ fi
 if ! echo "$LMS_BACKEND_SELECT_RETRIES" | grep -Eq '^[0-9]+$' || [ "$LMS_BACKEND_SELECT_RETRIES" -le 0 ]; then
     echo ">>> Invalid LMS_BACKEND_SELECT_RETRIES=$LMS_BACKEND_SELECT_RETRIES, fallback to 1"
     LMS_BACKEND_SELECT_RETRIES="1"
+fi
+if ! echo "$X11VNC_RESTART_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$X11VNC_RESTART_INTERVAL" -le 0 ]; then
+    echo ">>> Invalid X11VNC_RESTART_INTERVAL=$X11VNC_RESTART_INTERVAL, fallback to 2"
+    X11VNC_RESTART_INTERVAL="2"
 fi
 
 case "$(echo "$DESKTOP_LANGUAGE" | tr '[:lower:]' '[:upper:]')" in
@@ -1064,6 +1071,13 @@ start_x11vnc_server() {
         -defer 10
     )
 
+    # x11vnc may crash with SIGSEGV after initialize_xfixes on some hosts.
+    if [ "$X11VNC_DISABLE_XFIXES" = "true" ]; then
+        cmd+=(
+            -noxfixes
+        )
+    fi
+
     if [ "$ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION" = "true" ]; then
         rm -f "$VNC_REQUESTED_RESOLUTION_FILE"
         if [ -n "$SINGLE_CLIENT_RESOLUTION_HINT" ]; then
@@ -1077,6 +1091,25 @@ start_x11vnc_server() {
     else
         "${cmd[@]}" &
     fi
+}
+
+x11vnc_is_running() {
+    pgrep -x x11vnc >/dev/null 2>&1
+}
+
+start_x11vnc_watchdog() {
+    [ "$X11VNC_ENSURE_RUNNING" = "true" ] || return 0
+
+    (
+        while true; do
+            if ! x11vnc_is_running; then
+                echo ">>> x11vnc exited, restarting..."
+                start_x11vnc_server
+                sleep 1
+            fi
+            sleep "$X11VNC_RESTART_INTERVAL"
+        done
+    ) &
 }
 
 monitor_resolution_policy() {
@@ -1131,7 +1164,11 @@ if [ "$ENABLE_GUAC_WEB" = "true" ]; then
     if ! ensure_vnc_password_file; then
         echo ">>> Failed to initialize /root/.vnc/passwd, x11vnc may fail. Check /tmp/x11vnc-storepasswd.log"
     fi
+    if [ "$X11VNC_DISABLE_XFIXES" = "true" ]; then
+        echo ">>> x11vnc startup option: -noxfixes (stability mode enabled)."
+    fi
     start_x11vnc_server
+    start_x11vnc_watchdog
     sleep 2
 
     if [ "$ENABLE_MULTI_CLIENT_1080P_LOCK" = "true" ]; then
