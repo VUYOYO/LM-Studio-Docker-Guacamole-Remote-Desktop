@@ -20,6 +20,7 @@ services:
     depends_on:
       wait_init:
         condition: service_completed_successfully
+    command: ["/bin/bash", "/app/entrypoint.sh"]
     runtime: nvidia
     gpus: all
     privileged: true
