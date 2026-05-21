@@ -589,10 +589,24 @@ wait_for_runtime_preflight() {
     local delay="$RUNTIME_PREFLIGHT_DELAY_SECONDS"
     local timeout="$RUNTIME_PREFLIGHT_TIMEOUT_SECONDS"
     local interval="$RUNTIME_PREFLIGHT_INTERVAL_SECONDS"
+    local host_uptime="0"
+    local extra_delay="0"
+    local extra_timeout="0"
     local deadline=0
     local now=0
     local remain=0
     local reason=""
+
+    if [ -r /proc/uptime ]; then
+        host_uptime="$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)"
+    fi
+    if echo "$host_uptime" | grep -Eq '^[0-9]+$' && [ "$host_uptime" -lt 300 ]; then
+        extra_delay=30
+        extra_timeout=120
+        delay=$((delay + extra_delay))
+        timeout=$((timeout + extra_timeout))
+        echo ">>> Host uptime ${host_uptime}s indicates cold boot; applying extra startup guard (+${extra_delay}s delay, +${extra_timeout}s timeout)."
+    fi
 
     if [ "$delay" -gt 0 ]; then
         echo ">>> Runtime preflight delay ${delay}s"
@@ -607,6 +621,10 @@ wait_for_runtime_preflight() {
 
         if [ ! -e /dev/nvidiactl ] && [ ! -e /dev/nvidia0 ]; then
             reason="NVIDIA device nodes are not ready"
+        elif [ "${ENABLE_GPU_RENDERING}" = "true" ] && command -v nvidia-smi >/dev/null 2>&1; then
+            if ! nvidia-smi -L >/tmp/nvidia-preflight.log 2>&1; then
+                reason="nvidia-smi probe failed; driver stack is still warming up"
+            fi
         fi
 
         if [ -z "$reason" ]; then

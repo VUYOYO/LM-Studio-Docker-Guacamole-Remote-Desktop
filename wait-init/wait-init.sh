@@ -8,6 +8,15 @@ INTERVAL="5"
 reason=""
 json_warned="false"
 
+if [ -r /proc/uptime ]; then
+    host_uptime="$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)"
+    if echo "$host_uptime" | grep -Eq '^[0-9]+$' && [ "$host_uptime" -lt 300 ]; then
+        DELAY=$((DELAY + 30))
+        TIMEOUT=$((TIMEOUT + 120))
+        echo "[wait_init] cold boot detected (uptime=${host_uptime}s), extending guard window"
+    fi
+fi
+
 is_positive_int() {
     case "$1" in
         ''|*[!0-9]*)
