@@ -1,7 +1,26 @@
 services:
+  wait_init:
+    build:
+      context: ./wait-init
+    image: lmstudio-wait-init:latest
+    container_name: wait_init
+    environment:
+      - WAIT_INIT_DELAY_SECONDS=${WAIT_INIT_DELAY_SECONDS:-60}
+      - WAIT_INIT_TIMEOUT_SECONDS=${WAIT_INIT_TIMEOUT_SECONDS:-180}
+      - WAIT_INIT_POLL_INTERVAL_SECONDS=${WAIT_INIT_POLL_INTERVAL_SECONDS:-5}
+    volumes:
+      - /usr/share/vulkan/icd.d:/host/usr/share/vulkan/icd.d:ro
+      - /etc/vulkan/icd.d:/host/etc/vulkan/icd.d:ro
+      - /usr/share/glvnd/egl_vendor.d:/host/usr/share/glvnd/egl_vendor.d:ro
+      - /dev:/host/dev:ro
+    restart: "no"
+
   lmstudio:
     image: vuyoyo/lmstudio-guacamole:latest
     container_name: lmstudio
+    depends_on:
+      wait_init:
+        condition: service_completed_successfully
     runtime: nvidia
     gpus: all
     privileged: true
