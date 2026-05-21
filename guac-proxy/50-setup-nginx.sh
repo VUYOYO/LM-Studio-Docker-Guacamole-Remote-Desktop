@@ -191,8 +191,14 @@ map \$http_upgrade \$connection_upgrade {
 server {
     listen ${WEB_PORT}${WEB_SSL_LISTEN_SUFFIX};
     server_name _;${WEB_SSL_BLOCK}
+    resolver 127.0.0.11 ipv6=off valid=30s;
 
     client_max_body_size 2m;
+
+    # Use runtime DNS resolution so guacweb can survive reboot race conditions.
+    set \$lmstudio_bridge_upstream http://lmstudio:${BRIDGE_PORT};
+    set \$lmstudio_api_upstream http://lmstudio:1234;
+    set \$guacamole_upstream http://guacamole:8080;
 
     location = /clipboard-bridge.js {
         root /usr/share/nginx/html;
@@ -200,7 +206,7 @@ server {
     }
 
     location /__clipboard_bridge/ {
-        proxy_pass http://lmstudio:${BRIDGE_PORT}/;
+        proxy_pass \$lmstudio_bridge_upstream/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -210,7 +216,7 @@ server {
     }
 
     location /lm-api/ {
-        proxy_pass http://lmstudio:1234/;
+        proxy_pass \$lmstudio_api_upstream/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header Upgrade \$http_upgrade;
@@ -221,7 +227,7 @@ server {
     }
 
     location / {
-        proxy_pass http://guacamole:8080;
+        proxy_pass \$guacamole_upstream;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header Upgrade \$http_upgrade;
@@ -240,9 +246,12 @@ server {
 server {
     listen 1234${API_SSL_LISTEN_SUFFIX};
     server_name _;${API_SSL_BLOCK}
+    resolver 127.0.0.11 ipv6=off valid=30s;
+
+    set \$lmstudio_api_upstream http://lmstudio:1234;
 
     location / {
-        proxy_pass http://lmstudio:1234;
+        proxy_pass \$lmstudio_api_upstream;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header Upgrade \$http_upgrade;
