@@ -53,6 +53,9 @@ LM_STUDIO_DOWNLOAD_URL="${LM_STUDIO_DOWNLOAD_URL:-}"
 LM_STUDIO_DOWNLOAD_RETRIES="${LM_STUDIO_DOWNLOAD_RETRIES:-3}"
 LM_STUDIO_DOWNLOAD_TIMEOUT="${LM_STUDIO_DOWNLOAD_TIMEOUT:-30}"
 DESKTOP_SYNC_INTERVAL="${DESKTOP_SYNC_INTERVAL:-20}"
+WAIT_INIT_DELAY_SECONDS="${WAIT_INIT_DELAY_SECONDS:-30}"
+WAIT_INIT_TIMEOUT_SECONDS="${WAIT_INIT_TIMEOUT_SECONDS:-180}"
+WAIT_INIT_POLL_INTERVAL_SECONDS="${WAIT_INIT_POLL_INTERVAL_SECONDS:-5}"
 LM_ENSURE_RUNNING="${LM_ENSURE_RUNNING:-true}"
 LM_RESTART_INTERVAL="${LM_RESTART_INTERVAL:-2}"
 LM_ENSURE_WINDOW="${LM_ENSURE_WINDOW:-false}"
@@ -148,6 +151,18 @@ fi
 if ! echo "$XFWM_RESTART_COOLDOWN" | grep -Eq '^[0-9]+$' || [ "$XFWM_RESTART_COOLDOWN" -le 0 ]; then
     echo ">>> Invalid XFWM_RESTART_COOLDOWN=$XFWM_RESTART_COOLDOWN, fallback to 30"
     XFWM_RESTART_COOLDOWN="30"
+fi
+if ! echo "$WAIT_INIT_DELAY_SECONDS" | grep -Eq '^[0-9]+$' || [ "$WAIT_INIT_DELAY_SECONDS" -lt 0 ]; then
+    echo ">>> Invalid WAIT_INIT_DELAY_SECONDS=$WAIT_INIT_DELAY_SECONDS, fallback to 30"
+    WAIT_INIT_DELAY_SECONDS="30"
+fi
+if ! echo "$WAIT_INIT_TIMEOUT_SECONDS" | grep -Eq '^[0-9]+$' || [ "$WAIT_INIT_TIMEOUT_SECONDS" -le 0 ]; then
+    echo ">>> Invalid WAIT_INIT_TIMEOUT_SECONDS=$WAIT_INIT_TIMEOUT_SECONDS, fallback to 180"
+    WAIT_INIT_TIMEOUT_SECONDS="180"
+fi
+if ! echo "$WAIT_INIT_POLL_INTERVAL_SECONDS" | grep -Eq '^[0-9]+$' || [ "$WAIT_INIT_POLL_INTERVAL_SECONDS" -le 0 ]; then
+    echo ">>> Invalid WAIT_INIT_POLL_INTERVAL_SECONDS=$WAIT_INIT_POLL_INTERVAL_SECONDS, fallback to 5"
+    WAIT_INIT_POLL_INTERVAL_SECONDS="5"
 fi
 
 case "$(echo "$XFWM_USE_REPLACE" | tr '[:upper:]' '[:lower:]')" in
@@ -627,6 +642,65 @@ if [ -n "${DBUS_SYSTEM_BUS_ADDRESS:-}" ] && ! echo "$DBUS_SYSTEM_BUS_ADDRESS" | 
     unset DBUS_SYSTEM_BUS_ADDRESS
 fi
 
+wait_for_runtime_preflight() {
+    local delay="$WAIT_INIT_DELAY_SECONDS"
+    local timeout="$WAIT_INIT_TIMEOUT_SECONDS"
+    local interval="$WAIT_INIT_POLL_INTERVAL_SECONDS"
+    local deadline=0
+    local now=0
+    local remain=0
+    local reason=""
+
+    if [ "$delay" -gt 0 ]; then
+        echo ">>> Runtime preflight delay ${delay}s"
+        sleep "$delay"
+    fi
+
+    deadline=$(( $(date +%s) + timeout ))
+    echo ">>> Runtime preflight: checking prerequisites for up to ${timeout}s (interval=${interval}s)"
+
+    while true; do
+        reason=""
+
+        if [ ! -f /usr/share/vulkan/icd.d/nvidia_icd.json ] && [ ! -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
+            reason="missing nvidia_icd.json in /usr/share or /etc"
+        elif [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ] && [ ! -f /etc/glvnd/egl_vendor.d/10_nvidia.json ]; then
+            reason="missing 10_nvidia.json in /usr/share or /etc"
+        elif [ ! -e /dev/nvidiactl ] && [ ! -e /dev/nvidia0 ]; then
+            reason="NVIDIA device nodes are not ready"
+        fi
+
+        if [ -z "$reason" ]; then
+            echo ">>> Runtime preflight ready"
+            return 0
+        fi
+
+        now="$(date +%s)"
+        if [ "$now" -ge "$deadline" ]; then
+            echo ">>> Runtime preflight timeout: ${reason}"
+            return 1
+        fi
+
+        remain=$(( deadline - now ))
+        echo ">>> Runtime preflight not ready: ${reason}; retry in ${interval}s (remaining=${remain}s)"
+        sleep "$interval"
+    done
+}
+
+cleanup_stale_session_state() {
+    # Container restarts (without recreate) may preserve stale XFCE session files.
+    rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
+    rm -f /tmp/.ICE-unix/* 2>/dev/null || true
+    rm -f /tmp/.xfce4-session* 2>/dev/null || true
+    rm -rf /root/.cache/sessions/* 2>/dev/null || true
+}
+
+if ! wait_for_runtime_preflight; then
+    exit 1
+fi
+
+cleanup_stale_session_state
+
 GPU_AVAILABLE=false
 GPU_RUNTIME_AVAILABLE=false
 if [ -e /dev/nvidiactl ] || [ -e /dev/nvidia0 ] || [ -e /proc/driver/nvidia/version ] || command -v nvidia-smi >/dev/null 2>&1; then
@@ -655,20 +729,24 @@ fi
 
 echo ">>> Starting D-Bus..."
 mkdir -p /run/dbus
+if [ -S /run/dbus/system_bus_socket ] && ! pgrep -x dbus-daemon >/dev/null 2>&1; then
+    rm -f /run/dbus/system_bus_socket /run/dbus/pid 2>/dev/null || true
+fi
 if [ -f /run/dbus/pid ]; then
     dbus_pid="$(cat /run/dbus/pid 2>/dev/null || true)"
     if [ -z "$dbus_pid" ] || ! kill -0 "$dbus_pid" >/dev/null 2>&1; then
         rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
     fi
 fi
-if [ ! -S /run/dbus/system_bus_socket ]; then
+if ! pgrep -x dbus-daemon >/dev/null 2>&1 || [ ! -S /run/dbus/system_bus_socket ]; then
+    rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
     dbus-daemon --system --fork --nopidfile >/tmp/dbus-system.log 2>&1 || true
 fi
 export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 if command -v dbus-launch >/dev/null 2>&1; then
     eval "$(dbus-launch --sh-syntax)"
 fi
-if [ ! -S /run/dbus/system_bus_socket ]; then
+if [ ! -S /run/dbus/system_bus_socket ] || ! pgrep -x dbus-daemon >/dev/null 2>&1; then
     echo ">>> Warning: system D-Bus is unavailable; some desktop integrations may not work."
 fi
 
