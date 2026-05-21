@@ -6,6 +6,7 @@ TIMEOUT="180"
 INTERVAL="5"
 
 reason=""
+json_warned="false"
 
 is_positive_int() {
     case "$1" in
@@ -19,19 +20,29 @@ is_positive_int() {
 }
 
 check_ready() {
-    if [ ! -f /host/usr/share/vulkan/icd.d/nvidia_icd.json ]; then
-        reason="missing file: /usr/share/vulkan/icd.d/nvidia_icd.json"
-        return 1
-    fi
-
-    if [ ! -f /host/usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
-        reason="missing file: /usr/share/glvnd/egl_vendor.d/10_nvidia.json"
-        return 1
-    fi
-
     if [ ! -e /host/dev/nvidiactl ] && [ ! -e /host/dev/nvidia0 ]; then
         reason="NVIDIA device nodes are not ready (/dev/nvidiactl or /dev/nvidia0)"
         return 1
+    fi
+
+    has_vulkan_json="false"
+    has_egl_json="false"
+    for f in /host/usr/share/vulkan/icd.d/*nvidia*.json /host/etc/vulkan/icd.d/*nvidia*.json; do
+        if [ -f "$f" ]; then
+            has_vulkan_json="true"
+            break
+        fi
+    done
+    for f in /host/usr/share/glvnd/egl_vendor.d/*nvidia*.json /host/etc/glvnd/egl_vendor.d/*nvidia*.json; do
+        if [ -f "$f" ]; then
+            has_egl_json="true"
+            break
+        fi
+    done
+
+    if [ "$json_warned" != "true" ] && [ "$has_vulkan_json" != "true" ] && [ "$has_egl_json" != "true" ]; then
+        echo "[wait_init] warning: no NVIDIA Vulkan/EGL JSON found in common paths; continue because device nodes are ready"
+        json_warned="true"
     fi
 
     return 0

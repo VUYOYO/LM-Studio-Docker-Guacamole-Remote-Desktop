@@ -605,11 +605,7 @@ wait_for_runtime_preflight() {
     while true; do
         reason=""
 
-        if [ ! -f /usr/share/vulkan/icd.d/nvidia_icd.json ] && [ ! -f /etc/vulkan/icd.d/nvidia_icd.json ]; then
-            reason="missing nvidia_icd.json in /usr/share or /etc"
-        elif [ ! -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ] && [ ! -f /etc/glvnd/egl_vendor.d/10_nvidia.json ]; then
-            reason="missing 10_nvidia.json in /usr/share or /etc"
-        elif [ ! -e /dev/nvidiactl ] && [ ! -e /dev/nvidia0 ]; then
+        if [ ! -e /dev/nvidiactl ] && [ ! -e /dev/nvidia0 ]; then
             reason="NVIDIA device nodes are not ready"
         fi
 
@@ -646,13 +642,31 @@ cleanup_stale_session_state
 
 GPU_AVAILABLE=false
 GPU_RUNTIME_AVAILABLE=false
+NVIDIA_EGL_JSON=""
+NVIDIA_VULKAN_ICD_JSON=""
+
+for f in /usr/share/glvnd/egl_vendor.d/*nvidia*.json /etc/glvnd/egl_vendor.d/*nvidia*.json; do
+    if [ -f "$f" ]; then
+        NVIDIA_EGL_JSON="$f"
+        break
+    fi
+done
+
+for f in /usr/share/vulkan/icd.d/*nvidia*.json /etc/vulkan/icd.d/*nvidia*.json; do
+    if [ -f "$f" ]; then
+        NVIDIA_VULKAN_ICD_JSON="$f"
+        break
+    fi
+done
+
 if [ -e /dev/nvidiactl ] || [ -e /dev/nvidia0 ] || [ -e /proc/driver/nvidia/version ] || command -v nvidia-smi >/dev/null 2>&1; then
     GPU_RUNTIME_AVAILABLE=true
     export __GLX_VENDOR_LIBRARY_NAME=nvidia
-    if [ -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
-        export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
-    elif [ -f /etc/glvnd/egl_vendor.d/10_nvidia.json ]; then
-        export __EGL_VENDOR_LIBRARY_FILENAMES=/etc/glvnd/egl_vendor.d/10_nvidia.json
+    if [ -n "$NVIDIA_EGL_JSON" ]; then
+        export __EGL_VENDOR_LIBRARY_FILENAMES="$NVIDIA_EGL_JSON"
+    fi
+    if [ -n "$NVIDIA_VULKAN_ICD_JSON" ]; then
+        export VK_ICD_FILENAMES="$NVIDIA_VULKAN_ICD_JSON"
     fi
     unset LIBGL_ALWAYS_SOFTWARE
     echo ">>> NVIDIA runtime detected in container."
@@ -664,6 +678,9 @@ fi
 
 if [ "$GPU_RUNTIME_AVAILABLE" = "true" ] && [ "${ENABLE_GPU_RENDERING}" = "true" ]; then
     GPU_AVAILABLE=true
+    if [ -z "$NVIDIA_EGL_JSON" ] && [ -z "$NVIDIA_VULKAN_ICD_JSON" ]; then
+        echo ">>> Warning: no NVIDIA EGL/Vulkan JSON found in container common paths; desktop GPU rendering may degrade on this distro."
+    fi
 elif [ "$GPU_RUNTIME_AVAILABLE" = "true" ]; then
     echo ">>> NVIDIA runtime is available, but desktop GPU rendering is disabled by ENABLE_GPU_RENDERING=false."
 else
