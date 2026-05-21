@@ -87,6 +87,8 @@ services:
       # - MODEL_PATH=/root/.cache/lm-studio/models/gemma-4-E4B-it-GGUF
       # - CONTEXT_LENGTH=32768
     volumes:
+      # Use workspace entrypoint so hotfixes apply without rebuilding image.
+      - ./entrypoint.sh:/app/entrypoint.sh:ro
       - ./data:/app/lm-studio
       - ./cache:/root/.cache/lm-studio
       - ./models:/root/.cache/lm-studio/models
