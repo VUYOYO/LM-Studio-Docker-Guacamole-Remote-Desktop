@@ -22,17 +22,6 @@ ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION="${ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTI
 SINGLE_CLIENT_RESOLUTION_HINT="${SINGLE_CLIENT_RESOLUTION_HINT:-}"
 XVFB_MAX_RESOLUTION="${XVFB_MAX_RESOLUTION:-4096x2160}"
 VNC_REQUESTED_RESOLUTION_FILE="${VNC_REQUESTED_RESOLUTION_FILE:-/tmp/vnc-requested-resolution}"
-XVFB_STARTUP_TIMEOUT="${XVFB_STARTUP_TIMEOUT:-20}"
-XVFB_ENSURE_RUNNING="${XVFB_ENSURE_RUNNING:-true}"
-XVFB_RESTART_INTERVAL="${XVFB_RESTART_INTERVAL:-2}"
-X11VNC_DISABLE_XFIXES="${X11VNC_DISABLE_XFIXES:-true}"
-X11VNC_ENSURE_RUNNING="${X11VNC_ENSURE_RUNNING:-true}"
-X11VNC_RESTART_INTERVAL="${X11VNC_RESTART_INTERVAL:-2}"
-XFCE_ENSURE_COMPONENTS="${XFCE_ENSURE_COMPONENTS:-true}"
-XFCE_COMPONENT_CHECK_INTERVAL="${XFCE_COMPONENT_CHECK_INTERVAL:-5}"
-XFWM_USE_REPLACE="${XFWM_USE_REPLACE:-false}"
-XFWM_RESTART_COOLDOWN="${XFWM_RESTART_COOLDOWN:-30}"
-XFWM_DISABLE_COMPOSITING="${XFWM_DISABLE_COMPOSITING:-true}"
 GUAC_USERNAME="${GUAC_USERNAME:-lmstudio}"
 GUAC_PASSWORD="${GUAC_PASSWORD:-lmstudio}"
 GUAC_CONN_NAME="${GUAC_CONN_NAME:-LM Studio Shared Desktop}"
@@ -53,9 +42,6 @@ LM_STUDIO_DOWNLOAD_URL="${LM_STUDIO_DOWNLOAD_URL:-}"
 LM_STUDIO_DOWNLOAD_RETRIES="${LM_STUDIO_DOWNLOAD_RETRIES:-3}"
 LM_STUDIO_DOWNLOAD_TIMEOUT="${LM_STUDIO_DOWNLOAD_TIMEOUT:-30}"
 DESKTOP_SYNC_INTERVAL="${DESKTOP_SYNC_INTERVAL:-20}"
-WAIT_INIT_DELAY_SECONDS="${WAIT_INIT_DELAY_SECONDS:-30}"
-WAIT_INIT_TIMEOUT_SECONDS="${WAIT_INIT_TIMEOUT_SECONDS:-180}"
-WAIT_INIT_POLL_INTERVAL_SECONDS="${WAIT_INIT_POLL_INTERVAL_SECONDS:-5}"
 LM_ENSURE_RUNNING="${LM_ENSURE_RUNNING:-true}"
 LM_RESTART_INTERVAL="${LM_RESTART_INTERVAL:-2}"
 LM_ENSURE_WINDOW="${LM_ENSURE_WINDOW:-false}"
@@ -71,6 +57,16 @@ CLIPBOARD_AUTOCUTSEL_ENABLE="${CLIPBOARD_AUTOCUTSEL_ENABLE:-false}"
 CLIPBOARD_BRIDGE_ENABLE="${CLIPBOARD_BRIDGE_ENABLE:-true}"
 CLIPBOARD_BRIDGE_PORT="${CLIPBOARD_BRIDGE_PORT:-18080}"
 DESKTOP_LANGUAGE="${DESKTOP_LANGUAGE:-ENG}"
+
+# Keep these internals fixed to avoid exposing ineffective startup toggles.
+RUNTIME_PREFLIGHT_DELAY_SECONDS=30
+RUNTIME_PREFLIGHT_TIMEOUT_SECONDS=180
+RUNTIME_PREFLIGHT_INTERVAL_SECONDS=5
+XVFB_STARTUP_TIMEOUT_SECONDS=20
+XVFB_RESTART_INTERVAL_SECONDS=2
+X11VNC_RESTART_INTERVAL_SECONDS=2
+XFCE_COMPONENT_CHECK_INTERVAL_SECONDS=5
+XFWM_RESTART_COOLDOWN_SECONDS=30
 
 if ! echo "$SCREEN_RESOLUTION" | grep -Eq '^[0-9]+x[0-9]+$'; then
     echo ">>> Invalid SCREEN_RESOLUTION=$SCREEN_RESOLUTION, fallback to 1600x900"
@@ -132,59 +128,6 @@ if ! echo "$LMS_BACKEND_SELECT_RETRIES" | grep -Eq '^[0-9]+$' || [ "$LMS_BACKEND
     echo ">>> Invalid LMS_BACKEND_SELECT_RETRIES=$LMS_BACKEND_SELECT_RETRIES, fallback to 1"
     LMS_BACKEND_SELECT_RETRIES="1"
 fi
-if ! echo "$XVFB_STARTUP_TIMEOUT" | grep -Eq '^[0-9]+$' || [ "$XVFB_STARTUP_TIMEOUT" -le 0 ]; then
-    echo ">>> Invalid XVFB_STARTUP_TIMEOUT=$XVFB_STARTUP_TIMEOUT, fallback to 20"
-    XVFB_STARTUP_TIMEOUT="20"
-fi
-if ! echo "$XVFB_RESTART_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$XVFB_RESTART_INTERVAL" -le 0 ]; then
-    echo ">>> Invalid XVFB_RESTART_INTERVAL=$XVFB_RESTART_INTERVAL, fallback to 2"
-    XVFB_RESTART_INTERVAL="2"
-fi
-if ! echo "$X11VNC_RESTART_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$X11VNC_RESTART_INTERVAL" -le 0 ]; then
-    echo ">>> Invalid X11VNC_RESTART_INTERVAL=$X11VNC_RESTART_INTERVAL, fallback to 2"
-    X11VNC_RESTART_INTERVAL="2"
-fi
-if ! echo "$XFCE_COMPONENT_CHECK_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$XFCE_COMPONENT_CHECK_INTERVAL" -le 0 ]; then
-    echo ">>> Invalid XFCE_COMPONENT_CHECK_INTERVAL=$XFCE_COMPONENT_CHECK_INTERVAL, fallback to 5"
-    XFCE_COMPONENT_CHECK_INTERVAL="5"
-fi
-if ! echo "$XFWM_RESTART_COOLDOWN" | grep -Eq '^[0-9]+$' || [ "$XFWM_RESTART_COOLDOWN" -le 0 ]; then
-    echo ">>> Invalid XFWM_RESTART_COOLDOWN=$XFWM_RESTART_COOLDOWN, fallback to 30"
-    XFWM_RESTART_COOLDOWN="30"
-fi
-if ! echo "$WAIT_INIT_DELAY_SECONDS" | grep -Eq '^[0-9]+$' || [ "$WAIT_INIT_DELAY_SECONDS" -lt 0 ]; then
-    echo ">>> Invalid WAIT_INIT_DELAY_SECONDS=$WAIT_INIT_DELAY_SECONDS, fallback to 30"
-    WAIT_INIT_DELAY_SECONDS="30"
-fi
-if ! echo "$WAIT_INIT_TIMEOUT_SECONDS" | grep -Eq '^[0-9]+$' || [ "$WAIT_INIT_TIMEOUT_SECONDS" -le 0 ]; then
-    echo ">>> Invalid WAIT_INIT_TIMEOUT_SECONDS=$WAIT_INIT_TIMEOUT_SECONDS, fallback to 180"
-    WAIT_INIT_TIMEOUT_SECONDS="180"
-fi
-if ! echo "$WAIT_INIT_POLL_INTERVAL_SECONDS" | grep -Eq '^[0-9]+$' || [ "$WAIT_INIT_POLL_INTERVAL_SECONDS" -le 0 ]; then
-    echo ">>> Invalid WAIT_INIT_POLL_INTERVAL_SECONDS=$WAIT_INIT_POLL_INTERVAL_SECONDS, fallback to 5"
-    WAIT_INIT_POLL_INTERVAL_SECONDS="5"
-fi
-
-case "$(echo "$XFWM_USE_REPLACE" | tr '[:upper:]' '[:lower:]')" in
-    true|false)
-        XFWM_USE_REPLACE="$(echo "$XFWM_USE_REPLACE" | tr '[:upper:]' '[:lower:]')"
-        ;;
-    *)
-        echo ">>> Invalid XFWM_USE_REPLACE=$XFWM_USE_REPLACE, fallback to false"
-        XFWM_USE_REPLACE="false"
-        ;;
-esac
-
-case "$(echo "$XFWM_DISABLE_COMPOSITING" | tr '[:upper:]' '[:lower:]')" in
-    true|false)
-        XFWM_DISABLE_COMPOSITING="$(echo "$XFWM_DISABLE_COMPOSITING" | tr '[:upper:]' '[:lower:]')"
-        ;;
-    *)
-        echo ">>> Invalid XFWM_DISABLE_COMPOSITING=$XFWM_DISABLE_COMPOSITING, fallback to true"
-        XFWM_DISABLE_COMPOSITING="true"
-        ;;
-esac
-
 case "$(echo "$DESKTOP_LANGUAGE" | tr '[:lower:]' '[:upper:]')" in
     ENG|EN|EN-US|EN_US)
         DESKTOP_LANGUAGE="ENG"
@@ -643,9 +586,9 @@ if [ -n "${DBUS_SYSTEM_BUS_ADDRESS:-}" ] && ! echo "$DBUS_SYSTEM_BUS_ADDRESS" | 
 fi
 
 wait_for_runtime_preflight() {
-    local delay="$WAIT_INIT_DELAY_SECONDS"
-    local timeout="$WAIT_INIT_TIMEOUT_SECONDS"
-    local interval="$WAIT_INIT_POLL_INTERVAL_SECONDS"
+    local delay="$RUNTIME_PREFLIGHT_DELAY_SECONDS"
+    local timeout="$RUNTIME_PREFLIGHT_TIMEOUT_SECONDS"
+    local interval="$RUNTIME_PREFLIGHT_INTERVAL_SECONDS"
     local deadline=0
     local now=0
     local remain=0
@@ -759,7 +702,7 @@ xvfb_is_running() {
 }
 
 start_xvfb_server() {
-    local deadline=$((SECONDS + XVFB_STARTUP_TIMEOUT))
+    local deadline=$((SECONDS + XVFB_STARTUP_TIMEOUT_SECONDS))
 
     # Clear stale locks that may remain after abrupt host reboot.
     rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
@@ -777,8 +720,6 @@ start_xvfb_server() {
 }
 
 start_xvfb_watchdog() {
-    [ "$XVFB_ENSURE_RUNNING" = "true" ] || return 0
-
     (
         while true; do
             if ! x_display_ready; then
@@ -788,14 +729,14 @@ start_xvfb_watchdog() {
                     echo ">>> Failed to restart Xvfb on :${DISPLAY_NUM}."
                 fi
             fi
-            sleep "$XVFB_RESTART_INTERVAL"
+            sleep "$XVFB_RESTART_INTERVAL_SECONDS"
         done
     ) &
 }
 
 echo ">>> Starting Xvfb..."
 if ! start_xvfb_server; then
-    echo ">>> Failed to start Xvfb on :${DISPLAY_NUM} within ${XVFB_STARTUP_TIMEOUT}s."
+    echo ">>> Failed to start Xvfb on :${DISPLAY_NUM} within ${XVFB_STARTUP_TIMEOUT_SECONDS}s."
     exit 1
 fi
 start_xvfb_watchdog
@@ -815,29 +756,47 @@ start_xfce_desktop() {
     fi
 }
 
+refresh_desktop_surface() {
+    local force_reload="${1:-false}"
+
+    if ! x_display_ready; then
+        return 0
+    fi
+
+    if command -v xfconf-query >/dev/null 2>&1; then
+        DISPLAY="$DISPLAY" xfconf-query -c xfce4-desktop -p /desktop-icons/style -n -t int -s 2 >/dev/null 2>&1 || \
+            DISPLAY="$DISPLAY" xfconf-query -c xfce4-desktop -p /desktop-icons/style -s 2 >/dev/null 2>&1 || true
+    fi
+
+    if pgrep -x xfdesktop >/dev/null 2>&1; then
+        if [ "$force_reload" = "true" ]; then
+            DISPLAY="$DISPLAY" xfdesktop --reload >/tmp/xfdesktop.log 2>&1 || true
+        fi
+    else
+        echo ">>> xfdesktop is not running, starting..."
+        DISPLAY="$DISPLAY" xfdesktop --disable-wm-check >/tmp/xfdesktop.log 2>&1 &
+    fi
+}
+
 XFWM_LAST_START_TS=0
 
 start_xfwm4_component() {
     local now="$(date +%s)"
 
-    if [ "$XFWM_LAST_START_TS" -gt 0 ] && [ $((now - XFWM_LAST_START_TS)) -lt "$XFWM_RESTART_COOLDOWN" ]; then
-        echo ">>> xfwm4 restart cooldown active (${XFWM_RESTART_COOLDOWN}s), skip this round."
+    if [ "$XFWM_LAST_START_TS" -gt 0 ] && [ $((now - XFWM_LAST_START_TS)) -lt "$XFWM_RESTART_COOLDOWN_SECONDS" ]; then
+        echo ">>> xfwm4 restart cooldown active (${XFWM_RESTART_COOLDOWN_SECONDS}s), skip this round."
         return 0
     fi
 
     XFWM_LAST_START_TS="$now"
 
-    if [ "$XFWM_DISABLE_COMPOSITING" = "true" ] && command -v xfconf-query >/dev/null 2>&1; then
+    if command -v xfconf-query >/dev/null 2>&1; then
         DISPLAY="$DISPLAY" xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s false >/dev/null 2>&1 || \
             DISPLAY="$DISPLAY" xfconf-query -c xfwm4 -p /general/use_compositing -s false >/dev/null 2>&1 || true
     fi
 
     echo ">>> xfwm4 is not running, starting..."
-    if [ "$XFWM_USE_REPLACE" = "true" ]; then
-        DISPLAY="$DISPLAY" xfwm4 --replace >/tmp/xfwm4.log 2>&1 &
-    else
-        DISPLAY="$DISPLAY" xfwm4 >/tmp/xfwm4.log 2>&1 &
-    fi
+    DISPLAY="$DISPLAY" xfwm4 >/tmp/xfwm4.log 2>&1 &
 }
 
 ensure_xfce_components_once() {
@@ -845,31 +804,22 @@ ensure_xfce_components_once() {
         start_xfwm4_component
     fi
 
-    if ! pgrep -x xfdesktop >/dev/null 2>&1; then
-        echo ">>> xfdesktop is not running, starting..."
-        DISPLAY="$DISPLAY" xfdesktop --disable-wm-check >/tmp/xfdesktop.log 2>&1 &
-    fi
+    refresh_desktop_surface false
 
     if ! pgrep -x xfce4-panel >/dev/null 2>&1; then
         echo ">>> xfce4-panel is not running, starting..."
         DISPLAY="$DISPLAY" xfce4-panel >/tmp/xfce4-panel.log 2>&1 &
     fi
 
-    if command -v xfconf-query >/dev/null 2>&1; then
-        DISPLAY="$DISPLAY" xfconf-query -c xfce4-desktop -p /desktop-icons/style -n -t int -s 2 >/dev/null 2>&1 || \
-            DISPLAY="$DISPLAY" xfconf-query -c xfce4-desktop -p /desktop-icons/style -s 2 >/dev/null 2>&1 || true
-    fi
 }
 
 start_xfce_watchdog() {
-    [ "$XFCE_ENSURE_COMPONENTS" = "true" ] || return 0
-
     (
         while true; do
             if x_display_ready; then
                 ensure_xfce_components_once
             fi
-            sleep "$XFCE_COMPONENT_CHECK_INTERVAL"
+            sleep "$XFCE_COMPONENT_CHECK_INTERVAL_SECONDS"
         done
     ) &
 }
@@ -877,6 +827,7 @@ start_xfce_watchdog() {
 start_xfce_desktop
 sleep 5
 ensure_xfce_components_once
+refresh_desktop_surface true
 start_xfce_watchdog
 
 set_default_browser_to_chrome
@@ -1313,14 +1264,8 @@ start_x11vnc_server() {
         -noscr
         -wait 10
         -defer 10
+        -noxfixes
     )
-
-    # x11vnc may crash with SIGSEGV after initialize_xfixes on some hosts.
-    if [ "$X11VNC_DISABLE_XFIXES" = "true" ]; then
-        cmd+=(
-            -noxfixes
-        )
-    fi
 
     if [ "$ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION" = "true" ]; then
         rm -f "$VNC_REQUESTED_RESOLUTION_FILE"
@@ -1342,12 +1287,10 @@ x11vnc_is_running() {
 }
 
 start_x11vnc_watchdog() {
-    [ "$X11VNC_ENSURE_RUNNING" = "true" ] || return 0
-
     (
         while true; do
             if ! x_display_ready; then
-                sleep "$X11VNC_RESTART_INTERVAL"
+                sleep "$X11VNC_RESTART_INTERVAL_SECONDS"
                 continue
             fi
             if ! x11vnc_is_running; then
@@ -1355,7 +1298,7 @@ start_x11vnc_watchdog() {
                 start_x11vnc_server
                 sleep 1
             fi
-            sleep "$X11VNC_RESTART_INTERVAL"
+            sleep "$X11VNC_RESTART_INTERVAL_SECONDS"
         done
     ) &
 }
@@ -1398,6 +1341,7 @@ monitor_resolution_policy() {
                 after_resolution="$(xrandr --display "$display_addr" --current 2>/dev/null | awk '/\*/ { print $1; exit }')"
                 if [ "$after_resolution" = "$target_resolution" ]; then
                     echo ">>> Resolution policy applied: ${target_resolution} (active VNC clients: ${active_clients})"
+                    refresh_desktop_surface true
                 fi
             fi
         fi
@@ -1420,9 +1364,7 @@ if [ "$ENABLE_GUAC_WEB" = "true" ]; then
             exit 1
         fi
     fi
-    if [ "$X11VNC_DISABLE_XFIXES" = "true" ]; then
-        echo ">>> x11vnc startup option: -noxfixes (stability mode enabled)."
-    fi
+    echo ">>> x11vnc startup option: -noxfixes (stability mode enabled)."
     start_x11vnc_server
     start_x11vnc_watchdog
     sleep 2
