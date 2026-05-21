@@ -22,6 +22,9 @@ ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTION="${ENABLE_SINGLE_CLIENT_DYNAMIC_RESOLUTI
 SINGLE_CLIENT_RESOLUTION_HINT="${SINGLE_CLIENT_RESOLUTION_HINT:-}"
 XVFB_MAX_RESOLUTION="${XVFB_MAX_RESOLUTION:-4096x2160}"
 VNC_REQUESTED_RESOLUTION_FILE="${VNC_REQUESTED_RESOLUTION_FILE:-/tmp/vnc-requested-resolution}"
+XVFB_STARTUP_TIMEOUT="${XVFB_STARTUP_TIMEOUT:-20}"
+XVFB_ENSURE_RUNNING="${XVFB_ENSURE_RUNNING:-true}"
+XVFB_RESTART_INTERVAL="${XVFB_RESTART_INTERVAL:-2}"
 X11VNC_DISABLE_XFIXES="${X11VNC_DISABLE_XFIXES:-true}"
 X11VNC_ENSURE_RUNNING="${X11VNC_ENSURE_RUNNING:-true}"
 X11VNC_RESTART_INTERVAL="${X11VNC_RESTART_INTERVAL:-2}"
@@ -120,6 +123,14 @@ fi
 if ! echo "$LMS_BACKEND_SELECT_RETRIES" | grep -Eq '^[0-9]+$' || [ "$LMS_BACKEND_SELECT_RETRIES" -le 0 ]; then
     echo ">>> Invalid LMS_BACKEND_SELECT_RETRIES=$LMS_BACKEND_SELECT_RETRIES, fallback to 1"
     LMS_BACKEND_SELECT_RETRIES="1"
+fi
+if ! echo "$XVFB_STARTUP_TIMEOUT" | grep -Eq '^[0-9]+$' || [ "$XVFB_STARTUP_TIMEOUT" -le 0 ]; then
+    echo ">>> Invalid XVFB_STARTUP_TIMEOUT=$XVFB_STARTUP_TIMEOUT, fallback to 20"
+    XVFB_STARTUP_TIMEOUT="20"
+fi
+if ! echo "$XVFB_RESTART_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$XVFB_RESTART_INTERVAL" -le 0 ]; then
+    echo ">>> Invalid XVFB_RESTART_INTERVAL=$XVFB_RESTART_INTERVAL, fallback to 2"
+    XVFB_RESTART_INTERVAL="2"
 fi
 if ! echo "$X11VNC_RESTART_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$X11VNC_RESTART_INTERVAL" -le 0 ]; then
     echo ">>> Invalid X11VNC_RESTART_INTERVAL=$X11VNC_RESTART_INTERVAL, fallback to 2"
@@ -617,9 +628,55 @@ if command -v dbus-launch >/dev/null 2>&1; then
     eval "$(dbus-launch --sh-syntax)"
 fi
 
+x_display_ready() {
+    xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1
+}
+
+xvfb_is_running() {
+    pgrep -f "Xvfb :${DISPLAY_NUM}" >/dev/null 2>&1
+}
+
+start_xvfb_server() {
+    local deadline=$((SECONDS + XVFB_STARTUP_TIMEOUT))
+
+    # Clear stale locks that may remain after abrupt host reboot.
+    rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
+
+    Xvfb ":${DISPLAY_NUM}" -screen 0 "${XVFB_MAX_RESOLUTION}x${SCREEN_DEPTH}" +extension GLX +render &
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if x_display_ready; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    return 1
+}
+
+start_xvfb_watchdog() {
+    [ "$XVFB_ENSURE_RUNNING" = "true" ] || return 0
+
+    (
+        while true; do
+            if ! x_display_ready; then
+                echo ">>> Xvfb display :${DISPLAY_NUM} is not ready, restarting Xvfb..."
+                pkill -f "Xvfb :${DISPLAY_NUM}" >/dev/null 2>&1 || true
+                if ! start_xvfb_server; then
+                    echo ">>> Failed to restart Xvfb on :${DISPLAY_NUM}."
+                fi
+            fi
+            sleep "$XVFB_RESTART_INTERVAL"
+        done
+    ) &
+}
+
 echo ">>> Starting Xvfb..."
-Xvfb ":${DISPLAY_NUM}" -screen 0 "${XVFB_MAX_RESOLUTION}x${SCREEN_DEPTH}" +extension GLX +render &
-sleep 2
+if ! start_xvfb_server; then
+    echo ">>> Failed to start Xvfb on :${DISPLAY_NUM} within ${XVFB_STARTUP_TIMEOUT}s."
+    exit 1
+fi
+start_xvfb_watchdog
 export DISPLAY=":${DISPLAY_NUM}"
 
 if [ "$SCREEN_RESOLUTION" != "$XVFB_MAX_RESOLUTION" ]; then
@@ -1102,6 +1159,10 @@ start_x11vnc_watchdog() {
 
     (
         while true; do
+            if ! x_display_ready; then
+                sleep "$X11VNC_RESTART_INTERVAL"
+                continue
+            fi
             if ! x11vnc_is_running; then
                 echo ">>> x11vnc exited, restarting..."
                 start_x11vnc_server
@@ -1163,6 +1224,14 @@ if [ "$ENABLE_GUAC_WEB" = "true" ]; then
     echo ">>> Starting shared x11vnc server on :${DISPLAY_NUM}..."
     if ! ensure_vnc_password_file; then
         echo ">>> Failed to initialize /root/.vnc/passwd, x11vnc may fail. Check /tmp/x11vnc-storepasswd.log"
+    fi
+    if ! x_display_ready; then
+        echo ">>> X display :${DISPLAY_NUM} is not ready before x11vnc startup, forcing Xvfb restart..."
+        pkill -f "Xvfb :${DISPLAY_NUM}" >/dev/null 2>&1 || true
+        if ! start_xvfb_server; then
+            echo ">>> Cannot bring up X display :${DISPLAY_NUM}, exiting."
+            exit 1
+        fi
     fi
     if [ "$X11VNC_DISABLE_XFIXES" = "true" ]; then
         echo ">>> x11vnc startup option: -noxfixes (stability mode enabled)."
