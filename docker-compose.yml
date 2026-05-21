@@ -9,9 +9,11 @@ services:
       - WAIT_INIT_TIMEOUT_SECONDS=${WAIT_INIT_TIMEOUT_SECONDS:-180}
       - WAIT_INIT_POLL_INTERVAL_SECONDS=${WAIT_INIT_POLL_INTERVAL_SECONDS:-5}
     volumes:
+      - ./wait-init/wait-init.sh:/usr/local/bin/wait-init.sh:ro
       - /usr/share/vulkan/icd.d:/host/usr/share/vulkan/icd.d:ro
       - /usr/share/glvnd/egl_vendor.d:/host/usr/share/glvnd/egl_vendor.d:ro
       - /dev:/host/dev:ro
+    command: ["/bin/sh", "/usr/local/bin/wait-init.sh"]
     restart: "no"
 
   lmstudio:
