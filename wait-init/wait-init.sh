@@ -24,11 +24,6 @@ check_ready() {
         return 1
     fi
 
-    if [ ! -f /host/etc/vulkan/icd.d/nvidia_icd.json ]; then
-        reason="missing file: /etc/vulkan/icd.d/nvidia_icd.json"
-        return 1
-    fi
-
     if [ ! -f /host/usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
         reason="missing file: /usr/share/glvnd/egl_vendor.d/10_nvidia.json"
         return 1

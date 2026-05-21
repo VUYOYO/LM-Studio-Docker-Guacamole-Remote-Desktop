@@ -10,7 +10,6 @@ services:
       - WAIT_INIT_POLL_INTERVAL_SECONDS=${WAIT_INIT_POLL_INTERVAL_SECONDS:-5}
     volumes:
       - /usr/share/vulkan/icd.d:/host/usr/share/vulkan/icd.d:ro
-      - /etc/vulkan/icd.d:/host/etc/vulkan/icd.d:ro
       - /usr/share/glvnd/egl_vendor.d:/host/usr/share/glvnd/egl_vendor.d:ro
       - /dev:/host/dev:ro
     restart: "no"
@@ -94,7 +93,8 @@ services:
       - ./guacamole:/app/guacamole-config
       # 映射 Vulkan ICD 配置文件
       - /usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/nvidia_icd.json:ro
-      - /etc/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:ro
+      # 某些发行版不提供 /etc/vulkan/icd.d/nvidia_icd.json，复用 /usr/share 源文件挂到容器 /etc 路径
+      - /usr/share/vulkan/icd.d/nvidia_icd.json:/etc/vulkan/icd.d/nvidia_icd.json:ro
       # 映射 EGL 配置文件 (用于 GLX)
       - /usr/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro
     healthcheck:
