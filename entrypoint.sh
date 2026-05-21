@@ -30,6 +30,9 @@ X11VNC_ENSURE_RUNNING="${X11VNC_ENSURE_RUNNING:-true}"
 X11VNC_RESTART_INTERVAL="${X11VNC_RESTART_INTERVAL:-2}"
 XFCE_ENSURE_COMPONENTS="${XFCE_ENSURE_COMPONENTS:-true}"
 XFCE_COMPONENT_CHECK_INTERVAL="${XFCE_COMPONENT_CHECK_INTERVAL:-5}"
+XFWM_USE_REPLACE="${XFWM_USE_REPLACE:-false}"
+XFWM_RESTART_COOLDOWN="${XFWM_RESTART_COOLDOWN:-30}"
+XFWM_DISABLE_COMPOSITING="${XFWM_DISABLE_COMPOSITING:-true}"
 GUAC_USERNAME="${GUAC_USERNAME:-lmstudio}"
 GUAC_PASSWORD="${GUAC_PASSWORD:-lmstudio}"
 GUAC_CONN_NAME="${GUAC_CONN_NAME:-LM Studio Shared Desktop}"
@@ -142,6 +145,30 @@ if ! echo "$XFCE_COMPONENT_CHECK_INTERVAL" | grep -Eq '^[0-9]+$' || [ "$XFCE_COM
     echo ">>> Invalid XFCE_COMPONENT_CHECK_INTERVAL=$XFCE_COMPONENT_CHECK_INTERVAL, fallback to 5"
     XFCE_COMPONENT_CHECK_INTERVAL="5"
 fi
+if ! echo "$XFWM_RESTART_COOLDOWN" | grep -Eq '^[0-9]+$' || [ "$XFWM_RESTART_COOLDOWN" -le 0 ]; then
+    echo ">>> Invalid XFWM_RESTART_COOLDOWN=$XFWM_RESTART_COOLDOWN, fallback to 30"
+    XFWM_RESTART_COOLDOWN="30"
+fi
+
+case "$(echo "$XFWM_USE_REPLACE" | tr '[:upper:]' '[:lower:]')" in
+    true|false)
+        XFWM_USE_REPLACE="$(echo "$XFWM_USE_REPLACE" | tr '[:upper:]' '[:lower:]')"
+        ;;
+    *)
+        echo ">>> Invalid XFWM_USE_REPLACE=$XFWM_USE_REPLACE, fallback to false"
+        XFWM_USE_REPLACE="false"
+        ;;
+esac
+
+case "$(echo "$XFWM_DISABLE_COMPOSITING" | tr '[:upper:]' '[:lower:]')" in
+    true|false)
+        XFWM_DISABLE_COMPOSITING="$(echo "$XFWM_DISABLE_COMPOSITING" | tr '[:upper:]' '[:lower:]')"
+        ;;
+    *)
+        echo ">>> Invalid XFWM_DISABLE_COMPOSITING=$XFWM_DISABLE_COMPOSITING, fallback to true"
+        XFWM_DISABLE_COMPOSITING="true"
+        ;;
+esac
 
 case "$(echo "$DESKTOP_LANGUAGE" | tr '[:lower:]' '[:upper:]')" in
     ENG|EN|EN-US|EN_US)
@@ -710,10 +737,34 @@ start_xfce_desktop() {
     fi
 }
 
+XFWM_LAST_START_TS=0
+
+start_xfwm4_component() {
+    local now="$(date +%s)"
+
+    if [ "$XFWM_LAST_START_TS" -gt 0 ] && [ $((now - XFWM_LAST_START_TS)) -lt "$XFWM_RESTART_COOLDOWN" ]; then
+        echo ">>> xfwm4 restart cooldown active (${XFWM_RESTART_COOLDOWN}s), skip this round."
+        return 0
+    fi
+
+    XFWM_LAST_START_TS="$now"
+
+    if [ "$XFWM_DISABLE_COMPOSITING" = "true" ] && command -v xfconf-query >/dev/null 2>&1; then
+        DISPLAY="$DISPLAY" xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s false >/dev/null 2>&1 || \
+            DISPLAY="$DISPLAY" xfconf-query -c xfwm4 -p /general/use_compositing -s false >/dev/null 2>&1 || true
+    fi
+
+    echo ">>> xfwm4 is not running, starting..."
+    if [ "$XFWM_USE_REPLACE" = "true" ]; then
+        DISPLAY="$DISPLAY" xfwm4 --replace >/tmp/xfwm4.log 2>&1 &
+    else
+        DISPLAY="$DISPLAY" xfwm4 >/tmp/xfwm4.log 2>&1 &
+    fi
+}
+
 ensure_xfce_components_once() {
     if ! pgrep -x xfwm4 >/dev/null 2>&1; then
-        echo ">>> xfwm4 is not running, starting..."
-        DISPLAY="$DISPLAY" xfwm4 --replace >/tmp/xfwm4.log 2>&1 &
+        start_xfwm4_component
     fi
 
     if ! pgrep -x xfdesktop >/dev/null 2>&1; then
